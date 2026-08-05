@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=LuxenOS Updater
+Comment=Check for and install system updates
+Exec=foot -e sudo luxenos-updater
+Icon=system-software-update
+Type=Application
+Categories=System;Administration;
+Keywords=update;upgrade;maintenance;
+Terminal=false

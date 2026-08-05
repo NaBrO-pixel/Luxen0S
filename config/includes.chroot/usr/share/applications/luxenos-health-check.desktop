@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=LuxenOS Health Check
+Comment=Check desktop, Android, app platform, and security services
+Exec=foot -e luxenos-health-check
+Icon=utilities-system-monitor
+Type=Application
+Categories=System;Utility;
