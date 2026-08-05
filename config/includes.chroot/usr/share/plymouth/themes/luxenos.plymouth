@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=LuxenOS
+Description=LuxenOS branded boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/luxenos
+ScriptFile=/usr/share/plymouth/themes/luxenos/luxenos.script
