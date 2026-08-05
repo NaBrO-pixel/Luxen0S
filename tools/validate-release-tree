@@ -1,0 +1,107 @@
+#!/bin/sh
+# Validate that the LuxenOS build tree is merge-clean and build-layout ready.
+
+set -eu
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+check_file() {
+    [ -f "$1" ] || fail "missing required file: $1"
+}
+
+check_executable() {
+    check_file "$1"
+    [ -x "$1" ] || fail "required script is not executable: $1"
+}
+
+check_shell_syntax() {
+    check_file "$1"
+    if ! sh -n "$1" 2>/tmp/luxenos-syntax-err.$$; then
+        cat /tmp/luxenos-syntax-err.$$ >&2
+        rm -f /tmp/luxenos-syntax-err.$$
+        fail "shell syntax error in: $1"
+    fi
+    rm -f /tmp/luxenos-syntax-err.$$
+}
+
+if [ -f config ]; then
+    fail "top-level 'config' is a file; live-build requires it to be a directory"
+fi
+
+[ -d config ] || fail "missing live-build config directory"
+check_executable auto/config
+check_shell_syntax auto/config
+
+# Package lists
+check_file config/package-lists/base.list.chroot
+check_file config/package-lists/desktop.list.chroot
+check_file config/package-lists/android.list.chroot
+check_file config/package-lists/installer.list.chroot
+check_file config/package-lists/security.list.chroot
+
+# Hooks
+check_executable config/hooks/live/0100-install-waydroid.hook.chroot
+check_shell_syntax config/hooks/live/0100-install-waydroid.hook.chroot
+check_executable config/hooks/live/0150-installer-kiosk.hook.chroot
+check_shell_syntax config/hooks/live/0150-installer-kiosk.hook.chroot
+check_executable config/hooks/live/0200-configure-premium-defaults.hook.chroot
+check_shell_syntax config/hooks/live/0200-configure-premium-defaults.hook.chroot
+
+# Desktop / skel configs (what the *installed* system boots into)
+check_file config/includes.chroot/etc/skel/.config/sway/config
+check_file config/includes.chroot/etc/skel/.config/waybar/config
+check_file config/includes.chroot/etc/skel/.config/waybar/style.css
+check_file config/includes.chroot/etc/skel/.config/wofi/style.css
+check_file config/includes.chroot/etc/sysctl.d/99-luxenos.conf
+check_executable config/includes.chroot/usr/local/bin/luxenos-health-check
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-health-check
+check_executable config/includes.chroot/usr/local/bin/luxenos-power-profile-status
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-power-profile-status
+check_executable config/includes.chroot/usr/local/bin/luxenos-power-profile-cycle
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-power-profile-cycle
+check_file config/includes.chroot/usr/share/applications/luxenos-health-check.desktop
+
+# Automatic updates system
+check_executable config/includes.chroot/usr/local/bin/luxenos-updater
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-updater
+check_executable config/includes.chroot/usr/local/bin/luxenos-update-settings
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-update-settings
+check_file config/includes.chroot/usr/share/applications/luxenos-updater.desktop
+check_file config/includes.chroot/etc/systemd/system/luxenos-auto-update.service
+check_file config/includes.chroot/etc/systemd/system/luxenos-auto-update.timer
+check_file config/includes.chroot/etc/luxenos/updater.conf
+check_file config/includes.chroot/etc/luxenos-version
+check_executable config/hooks/live/0300-setup-auto-updates.hook.chroot
+check_shell_syntax config/hooks/live/0300-setup-auto-updates.hook.chroot
+
+# Kiosk / installer boot experience (what the live disc itself boots into)
+check_file config/includes.chroot/etc/luxenos-installer/kiosk-sway-config
+check_file config/includes.chroot/etc/calamares/branding/luxenos/branding.desc
+check_file config/includes.chroot/etc/calamares/settings.conf
+check_file config/includes.chroot/etc/calamares/modules/removefiles.conf
+
+# Branding
+check_file config/includes.chroot/usr/share/backgrounds/luxenos/wallpaper.png
+check_file config/includes.chroot/usr/share/plymouth/themes/luxenos/luxenos.plymouth
+check_file config/includes.chroot/usr/share/plymouth/themes/luxenos/luxenos.script
+check_file config/includes.chroot/boot/grub/themes/luxenos/theme.txt
+
+# CI
+check_file .github/workflows/validate.yml
+
+if command -v rg >/dev/null 2>&1; then
+    if rg -n '^(<<<<<<<|=======|>>>>>>>)' README.md auto config tools .github CONTRIBUTING.md >/dev/null 2>&1; then
+        rg -n '^(<<<<<<<|=======|>>>>>>>)' README.md auto config tools .github CONTRIBUTING.md >&2
+        fail "merge conflict markers remain"
+    fi
+else
+    if grep -rnE '^(<<<<<<<|=======|>>>>>>>)' README.md auto config tools .github CONTRIBUTING.md >/dev/null 2>&1; then
+        grep -rnE '^(<<<<<<<|=======|>>>>>>>)' README.md auto config tools .github CONTRIBUTING.md >&2
+        fail "merge conflict markers remain"
+    fi
+fi
+
+echo "LuxenOS release tree is merge-clean and syntax-valid."
