@@ -1,0 +1,34 @@
+---
+# Calamares branding component for LuxenOS.
+# Referenced from /etc/calamares/settings.conf via `branding: luxenos`.
+
+componentName: luxenos
+
+welcomeStyleCalamares: false
+welcomeExpandingLogo: true
+
+strings:
+    productName:         "LuxenOS Installer Edition"
+    shortProductName:    "LuxenOS"
+    version:             "1.2.0"
+    shortVersion:        "1.2.0"
+    versionedName:       "LuxenOS 1.2.0"
+    shortVersionedName:  "LuxenOS 1.2.0"
+    bootloaderEntryName: "LuxenOS"
+    productUrl:          "https://example.invalid/luxenos"
+    supportUrl:          "https://example.invalid/luxenos/support"
+    knownIssuesUrl:      "https://example.invalid/luxenos/issues"
+    releaseNotesUrl:     "https://example.invalid/luxenos/releases"
+
+images:
+    productLogo:         "logo.png"
+    productIcon:         "logo.png"
+    productWelcome:      "welcome.png"
+
+slideshow: "show.qml"
+
+style:
+   sidebarBackground:    "#1d2330"
+   sidebarText:           "#e0e6f0"
+   sidebarTextSelect:     "#ffffff"
+   sidebarTextHighlight:  "#5e81ac"
