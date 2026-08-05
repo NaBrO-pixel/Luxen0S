@@ -1,0 +1,57 @@
+#!/bin/sh
+# LuxenOS Installer Edition — configure the live boot session to launch
+# straight into Calamares instead of the normal Sway desktop.
+#
+# Everything this hook touches lives under paths the Calamares removefiles
+# module (config/includes.chroot/etc/calamares/modules/removefiles.conf)
+# deletes from the *installed* system, so end users get the normal full
+# desktop from /etc/skel/.config/sway/config on first login, not this kiosk.
+
+set -eu
+
+log() {
+    echo "[LuxenOS Installer Kiosk] $*" >&2
+}
+
+LIVE_USERNAME="${USERNAME:-user}"
+LIVE_HOME="/home/${LIVE_USERNAME}"
+
+if ! id "$LIVE_USERNAME" >/dev/null 2>&1; then
+    log "WARNING: live user '$LIVE_USERNAME' does not exist yet at hook time; skipping kiosk setup"
+    log "WARNING: this hook must run after live-build creates the live user (check hook numbering)"
+    exit 0
+fi
+
+log "Installing kiosk Sway session for live user '$LIVE_USERNAME'"
+mkdir -p "$LIVE_HOME/.config/sway"
+cp /etc/luxenos-installer/kiosk-sway-config "$LIVE_HOME/.config/sway/config"
+chown -R "$LIVE_USERNAME:$LIVE_USERNAME" "$LIVE_HOME/.config"
+
+log "Configuring tty1 autologin for '$LIVE_USERNAME'"
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf << UNIT
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin ${LIVE_USERNAME} --noclear %I \$TERM
+UNIT
+
+# Launch Sway (kiosk config) on first console login only, so a manual
+# terminal login on another tty isn't hijacked.
+PROFILE_SNIPPET="$LIVE_HOME/.bash_profile"
+if ! grep -q "luxenos-installer-kiosk" "$PROFILE_SNIPPET" 2>/dev/null; then
+    cat >> "$PROFILE_SNIPPET" << 'PROFILE'
+
+# luxenos-installer-kiosk: launch the installer session on the first
+# virtual console only.
+if [ -z "${WAYLAND_DISPLAY:-}" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec sway
+fi
+PROFILE
+    chown "$LIVE_USERNAME:$LIVE_USERNAME" "$PROFILE_SNIPPET"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || log "WARNING: systemctl daemon-reload failed"
+fi
+
+log "Kiosk session configured; live boot will go straight to Calamares"

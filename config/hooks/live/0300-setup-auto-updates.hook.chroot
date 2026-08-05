@@ -1,0 +1,110 @@
+#!/bin/sh
+# Configure automatic update system for LuxenOS
+# This hook sets up the systemd timer for automatic updates (disabled by default)
+# Users can enable with: sudo luxenos-update-settings enable
+
+set -eu
+
+log() {
+    echo "[LuxenOS Auto-Updates] $*" >&2
+}
+
+log "Configuring automatic update system..."
+
+# Ensure directories exist
+mkdir -p /etc/luxenos
+mkdir -p /var/backups/luxenos
+mkdir -p /var/cache/luxenos-updates
+mkdir -p /var/log
+
+# Verify configuration file exists
+if [ ! -f /etc/luxenos/updater.conf ]; then
+    log "ERROR: updater.conf not found"
+    exit 1
+fi
+
+# Verify systemd files exist
+if [ ! -f /etc/systemd/system/luxenos-auto-update.service ]; then
+    log "ERROR: systemd service file not found"
+    exit 1
+fi
+
+if [ ! -f /etc/systemd/system/luxenos-auto-update.timer ]; then
+    log "ERROR: systemd timer file not found"
+    exit 1
+fi
+
+# Verify updater script is executable
+if [ ! -x /usr/local/bin/luxenos-updater ]; then
+    log "Making luxenos-updater executable..."
+    chmod +x /usr/local/bin/luxenos-updater
+fi
+
+if [ ! -x /usr/local/bin/luxenos-update-settings ]; then
+    log "Making luxenos-update-settings executable..."
+    chmod +x /usr/local/bin/luxenos-update-settings
+fi
+
+# Initialize version file if not present
+if [ ! -f /etc/luxenos-version ]; then
+    log "WARNING: /etc/luxenos-version not found, creating default..."
+    echo "1.2.0-non-live" > /etc/luxenos-version
+fi
+
+# Create initial update log entry
+if [ ! -f /var/log/luxenos-updates.log ]; then
+    log "Creating update log..."
+    touch /var/log/luxenos-updates.log
+    chmod 644 /var/log/luxenos-updates.log
+fi
+
+# Reload systemd daemon to recognize new units
+if command -v systemctl >/dev/null 2>&1; then
+    log "Reloading systemd daemon..."
+    systemctl daemon-reload || log "WARNING: Could not reload systemd daemon"
+    
+    # Note: We do NOT enable the timer by default
+    # Users must explicitly enable it with: sudo luxenos-update-settings enable
+    log "Systemd units registered (timer disabled by default)"
+    log "Enable automatic updates with: sudo luxenos-update-settings enable"
+else
+    log "WARNING: systemctl not available, automatic updates will not work"
+fi
+
+# Set up logrotate for update logs
+if command -v logrotate >/dev/null 2>&1; then
+    log "Configuring log rotation for update logs..."
+    cat > /etc/logrotate.d/luxenos-updates << 'LOGROTATE'
+/var/log/luxenos-updates.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    create 0644 root root
+    sharedscripts
+    postrotate
+        systemctl reload rsyslog >/dev/null 2>&1 || true
+    endscript
+}
+LOGROTATE
+    log "Log rotation configured"
+fi
+
+# Create cron job as alternative to systemd timer (for systems without systemd)
+if command -v crontab >/dev/null 2>&1 && [ ! -d /etc/cron.d ]; then
+    log "Setting up cron fallback for automatic updates..."
+    cat > /etc/cron.d/luxenos-auto-updates << 'CRON'
+# LuxenOS Automatic Updates (cron fallback)
+# Runs daily at 2 AM if enabled in configuration
+0 2 * * * root [ "$(grep '^ENABLE_AUTO_UPDATES' /etc/luxenos/updater.conf | cut -d= -f2)" = "yes" ] && /usr/local/bin/luxenos-updater --auto
+CRON
+    chmod 644 /etc/cron.d/luxenos-auto-updates
+    log "Cron fallback configured"
+fi
+
+log "✓ Automatic update system configured successfully"
+log "  Configuration: /etc/luxenos/updater.conf"
+log "  Timer disabled by default (enable with: sudo luxenos-update-settings enable)"
+log "  Manual updates: luxenos-updater"
+log "  Settings: sudo luxenos-update-settings status"

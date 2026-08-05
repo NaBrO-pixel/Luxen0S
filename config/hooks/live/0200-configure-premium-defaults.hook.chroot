@@ -1,0 +1,70 @@
+#!/bin/sh
+# Configure distro-level defaults that make the live image feel like a polished OS.
+
+set -eu
+
+log() {
+    echo "[LuxenOS Defaults] $*" >&2
+}
+
+if command -v systemctl >/dev/null 2>&1; then
+    for service in apparmor.service tlp.service ufw.service bluetooth.service unattended-upgrades.service; do
+        if systemctl list-unit-files "$service" >/dev/null 2>&1; then
+            log "Enabling $service"
+            systemctl enable "$service" >/dev/null 2>&1 || log "WARNING: could not enable $service"
+        fi
+    done
+fi
+
+if command -v ufw >/dev/null 2>&1; then
+    log "Configuring default firewall policy"
+    ufw default deny incoming >/dev/null 2>&1 || true
+    ufw default allow outgoing >/dev/null 2>&1 || true
+    if [ -f /etc/ufw/ufw.conf ]; then
+        sed -i 's/^ENABLED=.*/ENABLED=yes/' /etc/ufw/ufw.conf
+    fi
+fi
+
+if command -v flatpak >/dev/null 2>&1; then
+    log "Adding Flathub remote"
+    flatpak remote-add --system --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || \
+        log "WARNING: could not add Flathub remote during build"
+fi
+
+# LuxenOS branded Plymouth boot theme, shipped via includes.chroot at
+# /usr/share/plymouth/themes/luxenos/. Falls back to the stock spinner theme
+# if the branded theme wasn't installed for some reason (e.g. a slimmed-down
+# build profile that skips includes.chroot).
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    if [ -d /usr/share/plymouth/themes/luxenos ]; then
+        log "Selecting the LuxenOS Plymouth theme"
+        plymouth-set-default-theme -R luxenos >/dev/null 2>&1 || {
+            log "WARNING: could not set LuxenOS Plymouth theme, falling back to spinner"
+            plymouth-set-default-theme -R spinner >/dev/null 2>&1 || log "WARNING: could not set Plymouth theme"
+        }
+    else
+        log "LuxenOS Plymouth theme not found, using spinner"
+        plymouth-set-default-theme -R spinner >/dev/null 2>&1 || log "WARNING: could not set Plymouth theme"
+    fi
+fi
+
+# LuxenOS branded GRUB theme, shipped via includes.chroot at
+# /boot/grub/themes/luxenos/theme.txt.
+if [ -f /boot/grub/themes/luxenos/theme.txt ] && [ -f /etc/default/grub ]; then
+    log "Selecting the LuxenOS GRUB theme"
+    if grep -q '^GRUB_THEME=' /etc/default/grub; then
+        sed -i 's#^GRUB_THEME=.*#GRUB_THEME=/boot/grub/themes/luxenos/theme.txt#' /etc/default/grub
+    else
+        echo 'GRUB_THEME=/boot/grub/themes/luxenos/theme.txt' >> /etc/default/grub
+    fi
+    if command -v update-grub >/dev/null 2>&1; then
+        update-grub >/dev/null 2>&1 || log "WARNING: update-grub failed after setting GRUB_THEME"
+    fi
+fi
+
+# Automatic security updates for installed (non-live) systems.
+if command -v dpkg-reconfigure >/dev/null 2>&1 && [ -x /usr/sbin/unattended-upgrade ]; then
+    log "Enabling unattended-upgrades"
+    echo 'APT::Periodic::Update-Package-Lists "1";'   > /etc/apt/apt.conf.d/20auto-upgrades
+    echo 'APT::Periodic::Unattended-Upgrade "1";'    >> /etc/apt/apt.conf.d/20auto-upgrades
+fi

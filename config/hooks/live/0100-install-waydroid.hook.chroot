@@ -1,0 +1,289 @@
+
+# Verify required commands are available
+for cmd in curl sh apt-get systemctl mkdir grep head; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        log "ERROR: Required command '$cmd' not found"
+        exit 1
+    fi
+done
+
+# Validate WAYDROID_IMAGE_TYPE early so a typo doesn't surface as a confusing
+# systemd failure on first boot instead.
+case "$WAYDROID_IMAGE_TYPE" in
+    GAPPS|VANILLA) ;;
+    *)
+        log "ERROR: Invalid WAYDROID_IMAGE_TYPE '$WAYDROID_IMAGE_TYPE' (expected GAPPS or VANILLA)"
+        exit 1
+        ;;
+esac
+
+# Check for KVM virtualization support
+check_kvm_support() {
+    if ! grep -qE "kvm|nested" /proc/cpuinfo 2>/dev/null; then
+        log "WARNING: KVM virtualization not detected; Waydroid may not function properly"
+        log "WARNING: Ensure nested virtualization is enabled in your hypervisor"
+    fi
+}
+
+# Download with retry logic for transient failures
+download_with_retry() {
+    local url="$1" output="$2" attempts=0
+    
+    while [ $attempts -lt "$DOWNLOAD_RETRIES" ]; do
+        log "Downloading from: $url (attempt $((attempts + 1))/$DOWNLOAD_RETRIES)"
+        
+        if curl --max-time "$CURL_TIMEOUT" -fsSL "$url" -o "$output"; then
+            # Verify the download is not empty
+            if [ -s "$output" ]; then
+                log "Download successful"
+                return 0
+            else
+                log "ERROR: Downloaded file is empty"
+                rm -f "$output"
+            fi
+        else
+            local exit_code=$?
+            log "ERROR: Download failed (exit code: $exit_code)"
+        fi
+        
+        attempts=$((attempts + 1))
+        if [ $attempts -lt "$DOWNLOAD_RETRIES" ]; then
+            log "Retrying in 2 seconds..."
+            sleep 2
+        fi
+    done
+    
+    return 1
+}
+
+# Verify a downloaded file's SHA-256 checksum.
+#
+# Release builds must set AURORA_STORE_SHA256 (fail-closed by default): if no
+# checksum is configured, this function now fails instead of silently
+# continuing, so an unpinned binary can't slip into a release image
+# unnoticed. For local/dev builds where you deliberately don't have a pinned
+# hash yet, set LUXENOS_ALLOW_UNPINNED_DOWNLOADS=1 to downgrade this to a
+# warning.
+verify_checksum() {
+    file="$1"
+    expected="$2"
+
+    if [ -z "$expected" ]; then
+        if [ "${LUXENOS_ALLOW_UNPINNED_DOWNLOADS:-0}" = "1" ]; then
+            log "WARNING: no checksum configured for $file; skipping integrity verification (LUXENOS_ALLOW_UNPINNED_DOWNLOADS=1)"
+            return 0
+        fi
+        log "ERROR: no checksum configured for $file"
+        log "ERROR: set AURORA_STORE_SHA256, or export LUXENOS_ALLOW_UNPINNED_DOWNLOADS=1 for a non-release build"
+        return 1
+    fi
+
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        log "ERROR: sha256sum not available; cannot verify integrity for $file"
+        return 1
+    fi
+
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+    if [ "$actual" != "$expected" ]; then
+        log "ERROR: checksum mismatch for $file"
+        log "ERROR: expected $expected"
+        log "ERROR: actual   $actual"
+        return 1
+    fi
+
+    log "Checksum verified for $file"
+    return 0
+}
+
+# Validate downloaded installer script
+validate_installer() {
+    local script="$1"
+    
+    if ! [ -f "$script" ]; then
+        log "ERROR: Installer script not found at $script"
+        return 1
+    fi
+    
+    if ! grep -q "waydroid" "$script"; then
+        log "ERROR: Downloaded script does not appear to be a valid Waydroid installer"
+        return 1
+    fi
+    
+    if ! head -1 "$script" | grep -qE "^#!"; then
+        log "ERROR: Downloaded script does not have a valid shebang"
+        return 1
+    fi
+    
+    log "Installer script validation passed"
+    return 0
+}
+
+log "Starting Waydroid installation (Version: $WAYDROID_VERSION, Image: $WAYDROID_IMAGE_TYPE)"
+
+# Check for KVM support
+check_kvm_support
+
+# Download and validate Waydroid repository setup script
+log "Downloading Waydroid repository installer..."
+if ! download_with_retry "$WAYDROID_REPO_URL" "$WAYDROID_INSTALL_SCRIPT"; then
+    log "ERROR: Failed to download Waydroid repository installer after $DOWNLOAD_RETRIES attempts"
+    exit 1
+fi
+
+if ! validate_installer "$WAYDROID_INSTALL_SCRIPT"; then
+    exit 1
+fi
+
+log "Executing Waydroid repository installer..."
+if ! log_exec sh "$WAYDROID_INSTALL_SCRIPT"; then
+    log "ERROR: Waydroid repository installer failed (exit code: $?)"
+    exit 1
+fi
+log "Waydroid repository configured successfully"
+
+# Update package lists and install Waydroid
+log "Updating package lists..."
+if ! log_exec apt-get update; then
+    log "ERROR: apt-get update failed (exit code: $?)"
+    exit 1
+fi
+
+log "Installing Waydroid package..."
+if ! log_exec apt-get install -y waydroid; then
+    log "ERROR: Failed to install Waydroid package (exit code: $?)"
+    exit 1
+fi
+log "Waydroid package installed successfully"
+
+# Create the first-boot systemd service for Waydroid initialization
+# This runs only on first boot (when waydroid_base.prop doesn't exist yet)
+log "Creating Waydroid first-boot systemd service..."
+cat > /etc/systemd/system/waydroid-first-init.service << UNIT
+[Unit]
+Description=One-time Waydroid Android image initialization (${WAYDROID_IMAGE_TYPE})
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/waydroid/waydroid_base.prop
+
+[Service]
+Type=oneshot
+# -s GAPPS: Google services enabled image (enables Play Store)
+# -s VANILLA: no Google services, smaller image
+# -f LineageOS: LineageOS image has best GApps compatibility
+ExecStart=/usr/bin/waydroid init -s ${WAYDROID_IMAGE_TYPE}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+if ! log_exec systemctl enable waydroid-first-init.service; then
+    log "ERROR: Failed to enable waydroid-first-init.service (exit code: $?)"
+    exit 1
+fi
+log "Waydroid first-boot service enabled"
+
+# Download Aurora Store APK for offline availability
+# Aurora Store = open-source Play Store frontend
+# It works without Google certification, allowing app installation even before certification completes
+log "Downloading Aurora Store APK for offline installation..."
+mkdir -p "$AURORA_STORE_DIR"
+
+if download_with_retry "$AURORA_STORE_URL" "$AURORA_STORE_DIR/AuroraStore.apk"; then
+    if verify_checksum "$AURORA_STORE_DIR/AuroraStore.apk" "$AURORA_STORE_SHA256"; then
+        log "Aurora Store APK downloaded and verified successfully"
+    else
+        log "ERROR: Aurora Store APK failed integrity verification; removing it"
+        rm -f "$AURORA_STORE_DIR/AuroraStore.apk"
+        log "ERROR: refusing to ship an unverified Aurora Store APK in a release build"
+        log "ERROR: set AURORA_STORE_SHA256, or LUXENOS_ALLOW_UNPINNED_DOWNLOADS=1 for a dev build"
+        exit 1
+    fi
+else
+    log "WARNING: Aurora Store APK download failed after $DOWNLOAD_RETRIES attempts (build will continue without it)"
+    log "WARNING: Users will need to install Aurora Store manually after first boot"
+fi
+
+# Create helper script for post-boot setup
+# This script handles Aurora Store installation and Play Store configuration
+log "Creating post-boot setup helper script..."
+mkdir -p /usr/local/bin
+cat > /usr/local/bin/lapdroid-setup-android << 'SCRIPT'
+#!/bin/sh
+echo ""
+echo "=== Lapdroid OS: Android / Play Store setup ==="
+echo ""
+
+# Wait for Waydroid session to be running
+echo "Starting Waydroid session if needed..."
+if ! waydroid status >/dev/null 2>&1; then
+    waydroid session start >/dev/null 2>&1 || true
+fi
+sleep 3
+
+# Install Aurora Store (works without Google account, no certification needed)
+echo "Installing Aurora Store..."
+if [ -f /usr/share/lapdroid-os/apks/AuroraStore.apk ]; then
+    if waydroid app install /usr/share/lapdroid-os/apks/AuroraStore.apk; then
+        echo "Aurora Store installed. Launch it from the Waydroid UI to download any Play Store app."
+    else
+        echo "Aurora Store install failed — make sure Waydroid is running (waydroid session start)"
+    fi
+else
+    echo "Aurora Store APK not found. You can download it from:"
+    echo "  https://f-droid.org/packages/com.aurora.store/"
+fi
+
+echo ""
+echo "=== Optional: Enable official Google Play Store ==="
+echo ""
+echo "Aurora Store covers most use cases. If you also want the official"
+echo "Play Store (requires a Google account), do the following:"
+echo ""
+echo "1. Get your Waydroid Android ID:"
+echo "     sudo waydroid shell"
+echo "     sqlite3 /data/data/com.google.android.gsf/databases/gservices.db \\"
+echo "       \"select * from main where name='android_id';\""
+echo "     exit"
+echo ""
+echo "2. Visit this URL on any browser and enter that Android ID:"
+echo "     https://www.google.com/android/uncertified"
+echo ""
+echo "3. Restart Waydroid:"
+echo "     waydroid session stop"
+echo "     waydroid session start"
+echo ""
+echo "4. Open Play Store in the Waydroid UI and sign in with your Google account."
+echo ""
+echo "Note: Google certification can take up to 10 minutes to activate."
+echo "Note: this step only applies to GAPPS images. VANILLA images do not"
+echo "include Google Play Services and cannot use the official Play Store."
+SCRIPT
+
+chmod +x /usr/local/bin/lapdroid-setup-android
+log "Setup helper script created"
+
+# Create desktop entry for easy access to the setup script
+log "Creating desktop application entry..."
+mkdir -p /usr/share/applications
+cat > /usr/share/applications/lapdroid-android-setup.desktop << 'DESKTOP'
+[Desktop Entry]
+Name=Android Setup
+Comment=Set up Play Store and Aurora Store in Waydroid
+Exec=foot -e lapdroid-setup-android
+Icon=android
+Type=Application
+Categories=System;
+DESKTOP
+
+log "Desktop entry created"
+
+# Final verification
+log "Verifying Waydroid installation..."
+if ! waydroid --version >/dev/null 2>&1; then
+    log "ERROR: Waydroid verification failed (exit code: $?)"
+    exit 1
+fi
+log "Waydroid installation verified successfully"
+
+log "=== Waydroid installation complete (${WAYDROID_IMAGE_TYPE}) ==="
