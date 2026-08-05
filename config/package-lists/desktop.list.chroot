@@ -1,0 +1,45 @@
+# Sway/Wayland desktop stack (this is what boots after install completes;
+# the live/install session itself uses only a minimal subset — see
+# config/hooks/live/0150-installer-kiosk.hook.chroot).
+sway
+swaylock
+swayidle
+waybar
+xwayland
+xdg-desktop-portal
+xdg-desktop-portal-wlr
+libwayland-dev
+libinput-dev
+foot
+wofi
+grim
+slurp
+swappy
+wl-clipboard
+brightnessctl
+dunst
+nwg-look
+polkit-kde-agent-1
+
+# Audio
+pipewire
+pipewire-pulse
+wireplumber
+pavucontrol-qt
+alsa-utils
+alsa-firmware
+
+# File manager
+thunar
+tumbler
+
+# Fonts
+fonts-noto
+fonts-font-awesome
+fonts-dejavu
+
+# Everyday apps
+firefox-esr
+mpv
+evince
+gedit

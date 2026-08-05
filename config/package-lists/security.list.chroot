@@ -1,0 +1,10 @@
+# Hardening for the installed system.
+apparmor
+apparmor-profiles
+apparmor-profiles-extra
+apparmor-utils
+ufw
+tlp
+bluetooth
+unattended-upgrades
+apt-listchanges

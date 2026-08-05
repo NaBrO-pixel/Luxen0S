@@ -1,0 +1,11 @@
+# Core Android-app-compatibility layer. This is the feature that
+# differentiates LuxenOS: Waydroid runs real Android apps as first-class
+# windows on the Sway desktop. Waydroid itself is installed by
+# config/hooks/live/0100-install-waydroid.hook.chroot (it ships from its
+# own upstream apt repo, added at build time, not from Debian's archive),
+# so this list only covers what that hook needs available beforehand.
+curl
+ca-certificates
+lxc
+python3
+dbus-user-session

@@ -1,0 +1,18 @@
+# Core system: bootable Debian base + services every other list builds on.
+dbus
+udev
+systemd
+sudo
+network-manager
+network-manager-gnome
+wireless-tools
+iw
+firmware-linux
+firmware-misc-nonfree
+libgl1
+libgl1-mesa-dri
+gvfs
+udisks2
+ntfs-3g
+plymouth
+plymouth-themes

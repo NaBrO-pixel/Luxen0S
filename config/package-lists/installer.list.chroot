@@ -1,0 +1,16 @@
+# Calamares graphical installer. The live/boot session launches this
+# directly (see 0150-installer-kiosk.hook.chroot) instead of the desktop,
+# so LuxenOS behaves like a dedicated install disc rather than a
+# try-it-first live image.
+calamares
+calamares-settings-debian
+qml-module-qtquick2
+qml-module-qtquick-controls2
+qml-module-qtquick-layouts
+qml-module-qtgraphicaleffects
+parted
+gparted
+dosfstools
+squashfs-tools
+cryptsetup
+cryptsetup-initramfs
