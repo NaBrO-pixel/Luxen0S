@@ -1,0 +1,40 @@
+# LuxenOS GRUB theme
+# Installed to /boot/grub/themes/luxenos/ and selected via
+# GRUB_THEME=/boot/grub/themes/luxenos/theme.txt in /etc/default/grub
+# (set automatically by config/hooks/live/0200-configure-premium-defaults.hook.chroot).
+
+title-text: "LuxenOS"
+title-color: "#e0e6f0"
+title-font: "Noto Sans Bold 24"
+
+desktop-image: "background.png"
+desktop-color: "#1d2330"
+
++ boot_menu {
+    left = 15%
+    top = 30%
+    width = 70%
+    height = 50%
+    item_color: "#8892a6"
+    selected_item_color: "#ffffff"
+    selected_item_pixmap_style: "select_*.png"
+    item_height: 32
+    item_padding: 6
+    item_spacing: 4
+    icon_width: 24
+    icon_height: 24
+}
+
++ progress_bar {
+    id: "__timeout__"
+    left = 15%
+    top = 85%
+    width = 70%
+    height = 20
+    fg_color: "#5e81ac"
+    bg_color: "#252d3f"
+    border_color: "#5e81ac"
+    text_color: "#e0e6f0"
+    show_text: true
+    text: "Booting in %d seconds"
+}
