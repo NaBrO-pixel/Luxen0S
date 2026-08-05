@@ -1,0 +1,22 @@
+# LuxenOS Installer Edition — kiosk session.
+# This file only exists in the *live* boot session used to run the
+# installer. It is deliberately deleted from the target system as the last
+# Calamares job (see config/includes.chroot/etc/calamares/modules/
+# luxenos-cleanup.conf), so an installed LuxenOS boots to the normal
+# full desktop defined in etc/skel/.config/sway/config, not this kiosk.
+
+set $mod Mod4
+font pango:Noto Sans 10
+
+output * bg /usr/share/backgrounds/luxenos/wallpaper.png fill
+
+# No bar, no launcher, no window management chrome — just the installer.
+exec calamares
+for_window [app_id="calamares"] fullscreen enable
+bindsym $mod+Shift+e exec swaymsg exit
+
+# If someone closes Calamares without finishing, offer a terminal instead of
+# a dead compositor, and let them retry.
+exec_always sh -c 'wl-paste >/dev/null 2>&1 || true'
+bindsym $mod+Return exec foot
+bindsym $mod+Shift+r exec calamares
