@@ -1,0 +1,103 @@
+#!/bin/sh
+#
+# Non-Build Configuration Script for LuxenOS
+# A Debian-based desktop OS with native Android app support (Waydroid),
+# distributed as a non-live installed ISO disc. The ISO contains a complete
+# pre-installed Debian root filesystem ready to boot and use immediately,
+# with no live RAM overlay or installer step required.
+#
+
+set -e
+
+# ============================================================================
+# Configuration Variables
+# ============================================================================
+
+DISTRIBUTION="${DISTRIBUTION:-trixie}"
+ARCHITECTURES="${ARCHITECTURES:-amd64}"
+ARCHIVE_AREAS="${ARCHIVE_AREAS:-main contrib non-free non-free-firmware}"
+BOOTAPPEND="${BOOTAPPEND:-quiet splash}"
+HOSTNAME="${HOSTNAME:-luxenos}"
+
+# Default user account created during the build (part of the installed system).
+USERNAME="${USERNAME:-user}"
+
+LOCALE="${LOCALE:-en_US.UTF-8}"
+TIMEZONE="${TIMEZONE:-UTC}"
+
+MIRROR_BOOTSTRAP="${MIRROR_BOOTSTRAP:-http://deb.debian.org/debian}"
+MIRROR_CHROOT="${MIRROR_CHROOT:-http://deb.debian.org/debian}"
+MIRROR_CHROOT_SECURITY="${MIRROR_CHROOT_SECURITY:-http://security.debian.org/debian-security}"
+
+# UEFI boot via the stock grub-efi-amd64 bootloader, themed via
+# config/includes.chroot/boot/grub/themes/luxenos/. Secure Boot / shim
+# support is not yet configured here.
+ISO_APPLICATION="LuxenOS"
+ISO_VOLUME="LUXENOS"
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+show_usage() {
+    cat <<USAGE
+Usage: $0 [options]
+
+Configure the live-build environment for LuxenOS.
+
+LuxenOS is distributed as a non-live ISO that contains a complete pre-installed
+Debian root filesystem. When you boot from the ISO or copy it to a USB drive,
+you get a fully functional Sway desktop with Waydroid (Android app support) 
+ready to use — no installation step required.
+
+Environment variables:
+  DISTRIBUTION              Debian release (default: trixie)
+  ARCHITECTURES             Target architecture (default: amd64)
+  ARCHIVE_AREAS             Repository areas (default: main contrib non-free non-free-firmware)
+  HOSTNAME                  System hostname (default: luxenos)
+  USERNAME                  Default user account (default: user)
+  LOCALE                    System locale (default: en_US.UTF-8)
+  TIMEZONE                  System timezone (default: UTC)
+  MIRROR_BOOTSTRAP          Bootstrap mirror URL
+  MIRROR_CHROOT             Chroot mirror URL
+  MIRROR_CHROOT_SECURITY    Security mirror URL
+
+  Waydroid/Android setup (required -- see config/hooks/live/0100-install-waydroid.hook.chroot):
+  WAYDROID_VERSION, WAYDROID_IMAGE_TYPE (GAPPS|VANILLA), WAYDROID_REPO_URL,
+  WAYDROID_INSTALL_SCRIPT, AURORA_STORE_URL, AURORA_STORE_DIR,
+  AURORA_STORE_SHA256, DOWNLOAD_RETRIES, CURL_TIMEOUT.
+  Set LUXENOS_ALLOW_UNPINNED_DOWNLOADS=1 to build without AURORA_STORE_SHA256
+  (dev builds only -- never for a release you'll distribute).
+
+Options:
+  -h, --help               Show this help message
+  Any other options are passed to 'lb config'
+
+Examples:
+  $0
+USAGE
+}
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    show_usage
+    exit 0
+fi
+
+lb config noauto \
+    --image-type iso-hybrid \
+    --mode debian \
+    --distribution "$DISTRIBUTION" \
+    --architectures "$ARCHITECTURES" \
+    --archive-areas "$ARCHIVE_AREAS" \
+    --bootappend-install "$BOOTAPPEND" \
+    --bootloader grub-efi-amd64 \
+    --mirror-bootstrap "$MIRROR_BOOTSTRAP" \
+    --mirror-chroot "$MIRROR_CHROOT" \
+    --mirror-chroot-security "$MIRROR_CHROOT_SECURITY" \
+    --iso-application "$ISO_APPLICATION" \
+    --iso-volume "$ISO_VOLUME" \
+    --hostname "$HOSTNAME" \
+    --username "$USERNAME" \
+    --locale "$LOCALE" \
+    --timezone "$TIMEZONE" \
+    "$@"
