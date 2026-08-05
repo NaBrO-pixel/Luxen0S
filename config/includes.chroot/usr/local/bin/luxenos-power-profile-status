@@ -1,0 +1,22 @@
+#!/bin/sh
+# Prints a Waybar custom-module JSON blob describing the current TLP mode.
+# Cycled by luxenos-power-profile-cycle (bound to Super+P and the Waybar
+# module's on-click action).
+
+set -eu
+
+STATE_FILE="${LUXENOS_POWER_STATE_FILE:-$HOME/.cache/luxenos-power-profile}"
+
+if [ -f "$STATE_FILE" ]; then
+    mode="$(cat "$STATE_FILE")"
+else
+    mode="balanced"
+fi
+
+case "$mode" in
+    powersave)  icon="🔋"; text="Power saver" ;;
+    performance) icon="⚡"; text="Performance" ;;
+    *)          icon="⚖"; text="Balanced" ;;
+esac
+
+printf '{"text": "%s %s", "tooltip": "TLP profile: %s (click to cycle)"}\n' "$icon" "$text" "$mode"

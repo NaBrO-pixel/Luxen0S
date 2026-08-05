@@ -1,0 +1,633 @@
+#!/bin/bash
+#
+# LuxenOS System Updater
+# Handles package updates, security patches, and system maintenance
+#
+# Usage:
+#   luxenos-updater                    # Interactive mode
+#   luxenos-updater --auto             # Automatic mode (unattended)
+#   luxenos-updater --check            # Check for updates without installing
+#   luxenos-updater --rollback         # Rollback to previous system state
+#
+
+set -e
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+LUXENOS_VERSION_FILE="/etc/luxenos-version"
+LUXENOS_UPDATE_LOG="/var/log/luxenos-updates.log"
+LUXENOS_BACKUP_DIR="/var/backups/luxenos"
+LUXENOS_UPDATE_CACHE="/var/cache/luxenos-updates"
+
+# Create necessary directories
+mkdir -p "$LUXENOS_BACKUP_DIR" "$LUXENOS_UPDATE_CACHE"
+
+# ============================================================================
+# Colors and Output
+# ============================================================================
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $*" | tee -a "$LUXENOS_UPDATE_LOG"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$LUXENOS_UPDATE_LOG"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $*" | tee -a "$LUXENOS_UPDATE_LOG"
+}
+
+log_section() {
+    echo -e "\n${BLUE}=== $* ===${NC}" | tee -a "$LUXENOS_UPDATE_LOG"
+}
+
+progress_bar() {
+    local current=$1
+    local total=$2
+    local width=40
+    local percent=$((current * 100 / total))
+    local filled=$((percent * width / 100))
+    
+    printf "["
+    printf "%${filled}s" | tr ' ' '='
+    printf "%$((width - filled))s" | tr ' ' '-'
+    printf "] %d%%\r" "$percent"
+}
+
+# ============================================================================
+# Pre-flight Checks
+# ============================================================================
+
+check_prerequisites() {
+    log_section "Checking Prerequisites"
+    
+    # Check if running as root
+    if [ "$EUID" -ne 0 ]; then
+        log_error "This updater requires root privileges. Use sudo."
+        exit 1
+    fi
+    
+    # Check internet connectivity
+    if ! ping -c 1 -W 2 deb.debian.org >/dev/null 2>&1; then
+        log_warn "Internet connectivity check failed. Some updates may not work."
+    fi
+    
+    # Check disk space (need at least 1GB free)
+    available_kb=$(df / | awk 'NR==2 {print $4}')
+    available_mb=$((available_kb / 1024))
+    if [ "$available_mb" -lt 1000 ]; then
+        log_error "Insufficient disk space: ${available_mb}MB available (need 1000MB+)"
+        exit 1
+    fi
+    log_info "Disk space: ${available_mb}MB available ✓"
+    
+    # Check if package manager is available
+    if ! command -v apt-get >/dev/null 2>&1; then
+        log_error "apt-get not found. Cannot proceed."
+        exit 1
+    fi
+    log_info "Package manager available ✓"
+}
+
+# ============================================================================
+# Backup Management
+# ============================================================================
+
+create_backup() {
+    log_section "Creating System Backup"
+    
+    local backup_name="luxenos-backup-$(date +%Y%m%d-%H%M%S)"
+    local backup_path="$LUXENOS_BACKUP_DIR/$backup_name"
+    
+    mkdir -p "$backup_path"
+    
+    # Backup package list
+    log_info "Backing up package list..."
+    dpkg --get-selections > "$backup_path/packages.list"
+    apt-mark showmanual > "$backup_path/manual-packages.list"
+    
+    # Backup /etc directory (critical configs)
+    log_info "Backing up system configuration..."
+    tar -czf "$backup_path/etc-backup.tar.gz" \
+        --exclude='/etc/luxenos-installer' \
+        --exclude='/etc/calamares' \
+        /etc 2>/dev/null || log_warn "Could not backup all /etc files"
+    
+    # Backup sway/desktop configs
+    log_info "Backing up user configurations..."
+    if [ -d /etc/skel/.config ]; then
+        tar -czf "$backup_path/skel-config-backup.tar.gz" /etc/skel/.config
+    fi
+    
+    # Create metadata
+    cat > "$backup_path/backup-metadata.txt" << EOF
+Backup Date: $(date)
+LuxenOS Version: $(cat "$LUXENOS_VERSION_FILE" 2>/dev/null || echo "unknown")
+Kernel: $(uname -r)
+Hostname: $(hostname)
+Disk Space Used: $(du -sh / 2>/dev/null | cut -f1)
+EOF
+    
+    # Keep only last 5 backups to save space
+    ls -t "$LUXENOS_BACKUP_DIR" | tail -n +6 | while read old_backup; do
+        log_warn "Removing old backup: $old_backup"
+        rm -rf "$LUXENOS_BACKUP_DIR/$old_backup"
+    done
+    
+    log_info "✓ Backup created: $backup_path"
+    echo "$backup_path"
+}
+
+# ============================================================================
+# Package Updates
+# ============================================================================
+
+update_package_cache() {
+    log_section "Updating Package Cache"
+    
+    if ! apt-get update 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        log_error "Failed to update package cache"
+        return 1
+    fi
+    
+    log_info "✓ Package cache updated"
+}
+
+check_available_updates() {
+    log_section "Checking Available Updates"
+    
+    local updates=$(apt-get upgrade -s 2>/dev/null | grep "^Inst" | wc -l)
+    local security_updates=$(apt-get upgrade -s 2>/dev/null | grep "^Inst.*Security" | wc -l)
+    
+    echo "$updates"
+    log_info "Available package updates: $updates"
+    log_info "Security updates: $security_updates"
+}
+
+list_available_updates() {
+    log_section "Packages Available for Update"
+    
+    apt-get upgrade -s 2>/dev/null | grep "^Inst" | \
+        awk '{print $2 " (" $4 " -> " $5 ")"}' | \
+        tee -a "$LUXENOS_UPDATE_LOG"
+}
+
+perform_upgrade() {
+    log_section "Installing Package Updates"
+    
+    # First: security updates
+    log_info "Installing security updates..."
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install \
+        --only-upgrade -y -qq 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        log_error "Security update installation failed"
+        return 1
+    fi
+    
+    # Second: full upgrade
+    log_info "Installing standard updates..."
+    if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        log_error "Package upgrade failed"
+        return 1
+    fi
+    
+    log_info "✓ All packages updated"
+}
+
+# ============================================================================
+# Waydroid Updates
+# ============================================================================
+
+update_waydroid() {
+    log_section "Checking Waydroid Updates"
+    
+    if ! command -v waydroid >/dev/null 2>&1; then
+        log_warn "Waydroid not installed, skipping Waydroid update"
+        return 0
+    fi
+    
+    local current_version=$(waydroid --version 2>/dev/null || echo "unknown")
+    log_info "Current Waydroid version: $current_version"
+    
+    # Check for Waydroid package updates
+    if apt-get upgrade -s 2>/dev/null | grep -q "^Inst waydroid"; then
+        log_info "Waydroid update available"
+        if [ "$AUTO_MODE" != "1" ]; then
+            read -p "Install Waydroid update? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log_warn "Skipping Waydroid update"
+                return 0
+            fi
+        fi
+        
+        log_info "Installing Waydroid update..."
+        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y waydroid 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+            log_error "Waydroid update failed"
+            return 1
+        fi
+        log_info "✓ Waydroid updated"
+    else
+        log_info "Waydroid is up to date"
+    fi
+}
+
+# ============================================================================
+# Flatpak Updates
+# ============================================================================
+
+update_flatpaks() {
+    log_section "Checking Flatpak Updates"
+    
+    if ! command -v flatpak >/dev/null 2>&1; then
+        log_warn "Flatpak not installed, skipping Flatpak updates"
+        return 0
+    fi
+    
+    log_info "Updating Flatpak remotes..."
+    if ! flatpak remote-ls --app 2>/dev/null | head -5 > /dev/null; then
+        log_warn "Flatpak not properly configured, skipping"
+        return 0
+    fi
+    
+    log_info "Checking for Flatpak app updates..."
+    if flatpak update --appstream 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        log_info "✓ Flatpak remotes updated"
+    else
+        log_warn "Could not update Flatpak remotes"
+    fi
+}
+
+# ============================================================================
+# System Health Checks
+# ============================================================================
+
+check_system_health() {
+    log_section "System Health Check"
+    
+    # Check broken dependencies
+    if apt-get check 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        log_info "✓ No broken dependencies"
+    else
+        log_error "Broken dependencies detected"
+        log_info "Running: apt-get --fix-broken install"
+        if ! apt-get --fix-broken install -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+            log_error "Could not fix broken dependencies automatically"
+        fi
+    fi
+    
+    # Clean up unused packages
+    local orphaned=$(apt-get autoremove --dry-run 2>/dev/null | grep "^Remov" | wc -l)
+    if [ "$orphaned" -gt 0 ]; then
+        log_info "Found $orphaned orphaned packages"
+        if [ "$AUTO_MODE" != "1" ]; then
+            read -p "Remove orphaned packages? (y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                log_info "Removing orphaned packages..."
+                apt-get autoremove -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
+            fi
+        else
+            log_info "Removing orphaned packages in auto mode..."
+            apt-get autoremove -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
+        fi
+    else
+        log_info "✓ No orphaned packages"
+    fi
+    
+    # Verify filesystem integrity
+    log_info "Checking filesystem integrity..."
+    if command -v fsck >/dev/null 2>&1; then
+        if e2fsck -n / 2>/dev/null | grep -q "no errors"; then
+            log_info "✓ Filesystem integrity verified"
+        else
+            log_warn "Consider running fsck on next boot"
+        fi
+    fi
+}
+
+# ============================================================================
+# Kernel Updates
+# ============================================================================
+
+check_kernel_updates() {
+    log_section "Checking Kernel Updates"
+    
+    local current_kernel=$(uname -r)
+    log_info "Current kernel: $current_kernel"
+    
+    # Check for newer kernel packages
+    if apt-cache policy linux-image-amd64 2>/dev/null | grep -q "Candidate"; then
+        log_info "Kernel updates may be available"
+        if [ "$AUTO_MODE" != "1" ]; then
+            read -p "Check detailed kernel update info? (y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                apt-cache policy linux-image-amd64 2>/dev/null | tee -a "$LUXENOS_UPDATE_LOG"
+            fi
+        fi
+    else
+        log_info "Kernel is up to date"
+    fi
+}
+
+# ============================================================================
+# Firmware Updates
+# ============================================================================
+
+update_firmware() {
+    log_section "Checking Firmware Updates"
+    
+    if ! command -v fwupdmgr >/dev/null 2>&1; then
+        log_warn "fwupdmgr not installed, skipping firmware updates"
+        return 0
+    fi
+    
+    log_info "Checking for firmware updates..."
+    if ! fwupdmgr refresh 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        log_warn "Could not refresh firmware metadata"
+        return 0
+    fi
+    
+    if fwupdmgr get-updates 2>&1 | tee -a "$LUXENOS_UPDATE_LOG" | grep -q "Update"; then
+        log_info "Firmware updates available"
+        if [ "$AUTO_MODE" != "1" ]; then
+            read -p "Install firmware updates? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log_warn "Skipping firmware updates"
+                return 0
+            fi
+        fi
+        
+        log_info "Installing firmware updates..."
+        if fwupdmgr update 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+            log_info "✓ Firmware updated"
+        else
+            log_error "Firmware update failed"
+        fi
+    else
+        log_info "Firmware is up to date"
+    fi
+}
+
+# ============================================================================
+# System Cleanup
+# ============================================================================
+
+cleanup_system() {
+    log_section "System Cleanup"
+    
+    # Remove package cache
+    local cache_size=$(du -sh /var/cache/apt 2>/dev/null | cut -f1)
+    log_info "Removing old package cache ($cache_size)..."
+    apt-get autoclean -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
+    
+    # Clear temporary files
+    log_info "Clearing temporary files..."
+    find /tmp -type f -atime +7 -delete 2>/dev/null || true
+    find /var/tmp -type f -atime +7 -delete 2>/dev/null || true
+    
+    # Clear old logs
+    log_info "Clearing old logs..."
+    journalctl --vacuum=30d 2>/dev/null || true
+    
+    # Check disk usage after cleanup
+    local used_space=$(df / | awk 'NR==2 {printf "%.1f", $3/1024/1024}')
+    log_info "✓ Cleanup complete (disk usage: ${used_space}GB)"
+}
+
+# ============================================================================
+# Rollback Functionality
+# ============================================================================
+
+list_available_backups() {
+    log_section "Available Backups"
+    
+    if [ ! -d "$LUXENOS_BACKUP_DIR" ] || [ -z "$(ls -A "$LUXENOS_BACKUP_DIR")" ]; then
+        log_error "No backups found"
+        return 1
+    fi
+    
+    ls -ltrh "$LUXENOS_BACKUP_DIR" | tail -n +2 | \
+        awk '{print NR ": " $NF " (" $6 " " $7 " " $8 ")"}' | \
+        tee -a "$LUXENOS_UPDATE_LOG"
+}
+
+rollback_system() {
+    log_section "System Rollback"
+    
+    if ! list_available_backups; then
+        return 1
+    fi
+    
+    log_warn "WARNING: Rollback will restore system state from backup"
+    log_warn "WARNING: Changes made after backup will be lost"
+    read -p "Continue with rollback? (yes/no) " response
+    if [ "$response" != "yes" ]; then
+        log_info "Rollback cancelled"
+        return 0
+    fi
+    
+    read -p "Select backup number to restore: " backup_num
+    
+    # Get the Nth backup (POSIX compatible)
+    local backup_to_restore=$(ls -t "$LUXENOS_BACKUP_DIR" | sed -n "${backup_num}p")
+    
+    if [ -z "$backup_to_restore" ]; then
+        log_error "Invalid backup selection"
+        return 1
+    fi
+    
+    local backup_path="$LUXENOS_BACKUP_DIR/$backup_to_restore"
+    
+    log_warn "Restoring from: $backup_path"
+    log_info "Restoring package list..."
+    if [ -f "$backup_path/packages.list" ]; then
+        dpkg --set-selections < "$backup_path/packages.list"
+        apt-get dselect-upgrade -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
+    fi
+    
+    log_info "Restoring /etc configuration..."
+    if [ -f "$backup_path/etc-backup.tar.gz" ]; then
+        tar -xzf "$backup_path/etc-backup.tar.gz" -C / 2>/dev/null || \
+            log_warn "Could not restore all /etc files"
+    fi
+    
+    log_info "Restoring sway/desktop configs..."
+    if [ -f "$backup_path/skel-config-backup.tar.gz" ]; then
+        tar -xzf "$backup_path/skel-config-backup.tar.gz" -C / 2>/dev/null || \
+            log_warn "Could not restore all config files"
+    fi
+    
+    log_info "✓ Rollback complete"
+    log_warn "Please reboot for all changes to take effect"
+}
+
+# ============================================================================
+# Update Report
+# ============================================================================
+
+generate_report() {
+    log_section "Update Report"
+    
+    cat << EOF | tee -a "$LUXENOS_UPDATE_LOG"
+
+═══════════════════════════════════════════════════════════════
+                    LuxenOS Update Report
+═══════════════════════════════════════════════════════════════
+
+Update Date: $(date)
+Hostname: $(hostname)
+LuxenOS Version: $(cat "$LUXENOS_VERSION_FILE" 2>/dev/null || echo "unknown")
+
+System Information:
+  Kernel: $(uname -r)
+  CPU: $(nproc) cores
+  Memory: $(free -h | awk 'NR==2 {print $2}')
+  Disk Used: $(df / | awk 'NR==2 {printf "%.1f%%", $3/($3+$4)*100}')
+
+Update Statistics:
+  Total Packages: $(dpkg -l | grep "^ii" | wc -l)
+  Upgradeable Packages: $(apt-get upgrade -s 2>/dev/null | grep "^Inst" | wc -l)
+  Last Update: $(stat -c %y "$LUXENOS_UPDATE_LOG" 2>/dev/null | cut -d' ' -f1-2)
+
+═══════════════════════════════════════════════════════════════
+
+Full log: $LUXENOS_UPDATE_LOG
+
+EOF
+}
+
+# ============================================================================
+# Main Menu
+# ============================================================================
+
+show_menu() {
+    echo ""
+    echo "╔════════════════════════════════════════════╗"
+    echo "║        LuxenOS System Updater              ║"
+    echo "╚════════════════════════════════════════════╝"
+    echo ""
+    echo "1. Check for updates"
+    echo "2. Install all updates"
+    echo "3. Install security updates only"
+    echo "4. List available updates"
+    echo "5. Update Waydroid"
+    echo "6. Update Flatpaks"
+    echo "7. Full system maintenance"
+    echo "8. View update history"
+    echo "9. Create backup"
+    echo "10. Rollback system"
+    echo "11. Generate report"
+    echo "0. Exit"
+    echo ""
+}
+
+# ============================================================================
+# Main Logic
+# ============================================================================
+
+main() {
+    # Parse command line arguments
+    AUTO_MODE=0
+    CHECK_ONLY=0
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --auto)
+                AUTO_MODE=1
+                shift
+                ;;
+            --check)
+                CHECK_ONLY=1
+                shift
+                ;;
+            --rollback)
+                check_prerequisites
+                rollback_system
+                exit $?
+                ;;
+            --help)
+                cat << EOF
+LuxenOS Updater - System Update Management
+
+Usage:
+  luxenos-updater                   Interactive mode
+  luxenos-updater --auto            Automatic updates
+  luxenos-updater --check           Check without installing
+  luxenos-updater --rollback        Rollback to previous backup
+
+Options:
+  --auto                            Install updates automatically
+  --check                           Check for updates only
+  --rollback                        Rollback system state
+  --help                            Show this help message
+
+EOF
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+    
+    check_prerequisites
+    
+    # Log startup
+    log_info "LuxenOS Updater started ($(date))"
+    
+    if [ "$AUTO_MODE" = "1" ]; then
+        # Automatic mode: perform full update
+        create_backup
+        update_package_cache
+        perform_upgrade
+        update_waydroid
+        update_flatpaks
+        update_firmware
+        check_system_health
+        cleanup_system
+        generate_report
+        log_info "✓ Automatic update completed"
+    elif [ "$CHECK_ONLY" = "1" ]; then
+        # Check mode: only check, don't install
+        update_package_cache
+        check_available_updates
+        list_available_updates
+    else
+        # Interactive mode
+        while true; do
+            show_menu
+            read -p "Select option (0-11): " choice
+            
+            case $choice in
+                1) update_package_cache && check_available_updates ;;
+                2) create_backup && update_package_cache && perform_upgrade && generate_report ;;
+                3) create_backup && update_package_cache && apt-get install -y --only-upgrade 2>&1 | tee -a "$LUXENOS_UPDATE_LOG" ;;
+                4) list_available_updates ;;
+                5) update_waydroid ;;
+                6) update_flatpaks ;;
+                7) create_backup && update_package_cache && perform_upgrade && update_waydroid && update_flatpaks && update_firmware && check_system_health && cleanup_system && generate_report ;;
+                8) echo "=== Update History ===" && tail -n 50 "$LUXENOS_UPDATE_LOG" ;;
+                9) create_backup ;;
+                10) rollback_system ;;
+                11) generate_report ;;
+                0) log_info "Exiting updater" && exit 0 ;;
+                *) log_error "Invalid option" ;;
+            esac
+        done
+    fi
+}
+
+# Run main function
+main "$@"

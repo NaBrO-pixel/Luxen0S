@@ -1,0 +1,31 @@
+#!/bin/sh
+# Cycles balanced -> powersave -> performance -> balanced ... and asks TLP to
+# apply the corresponding mode. Falls back to just recording the preference
+# if tlp isn't installed/enabled, so this stays safe to run on any session.
+
+set -eu
+
+STATE_FILE="${LUXENOS_POWER_STATE_FILE:-$HOME/.cache/luxenos-power-profile}"
+mkdir -p "$(dirname "$STATE_FILE")"
+
+current="balanced"
+[ -f "$STATE_FILE" ] && current="$(cat "$STATE_FILE")"
+
+case "$current" in
+    balanced)    next="powersave" ;;
+    powersave)   next="performance" ;;
+    performance) next="balanced" ;;
+    *)           next="balanced" ;;
+esac
+
+echo "$next" > "$STATE_FILE"
+
+if command -v tlp >/dev/null 2>&1; then
+    case "$next" in
+        powersave)   sudo -n tlp bat >/dev/null 2>&1 || true ;;
+        performance) sudo -n tlp ac  >/dev/null 2>&1 || true ;;
+        balanced)    sudo -n tlp start >/dev/null 2>&1 || true ;;
+    esac
+fi
+
+command -v pkill >/dev/null 2>&1 && pkill -RTMIN+8 waybar >/dev/null 2>&1 || true

@@ -1,0 +1,63 @@
+#!/bin/sh
+# Quick post-boot diagnostics for LuxenOS live sessions.
+
+set -eu
+
+check_command() {
+    name="$1"
+    command="$2"
+    if command -v "$command" >/dev/null 2>&1; then
+        printf 'PASS  %-18s %s\n' "$name" "$(command -v "$command")"
+    else
+        printf 'FAIL  %-18s missing command: %s\n' "$name" "$command"
+    fi
+}
+
+check_service() {
+    service="$1"
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled "$service" >/dev/null 2>&1; then
+        printf 'PASS  %-18s enabled\n' "$service"
+    else
+        printf 'WARN  %-18s not enabled or unavailable\n' "$service"
+    fi
+}
+
+check_path() {
+    name="$1"
+    path="$2"
+    if [ -e "$path" ]; then
+        printf 'PASS  %-18s %s\n' "$name" "$path"
+    else
+        printf 'WARN  %-18s missing: %s\n' "$name" "$path"
+    fi
+}
+
+printf '\nLuxenOS health check\n'
+printf '====================\n'
+check_command "Sway" sway
+check_command "Waybar" waybar
+check_command "Waydroid" waydroid
+check_command "Flatpak" flatpak
+check_command "Firewall" ufw
+check_command "Firmware" fwupdmgr
+check_command "Installer" calamares
+check_service apparmor.service
+check_service tlp.service
+check_service ufw.service
+check_service unattended-upgrades.service
+check_path "Wallpaper" /usr/share/backgrounds/luxenos/wallpaper.png
+check_path "Plymouth theme" /usr/share/plymouth/themes/luxenos/luxenos.plymouth
+check_path "GRUB theme" /boot/grub/themes/luxenos/theme.txt
+
+if [ -r /proc/cpuinfo ] && grep -qE 'vmx|svm' /proc/cpuinfo; then
+    printf 'PASS  %-18s CPU virtualization available\n' "Waydroid KVM"
+else
+    printf 'WARN  %-18s CPU virtualization not detected\n' "Waydroid KVM"
+fi
+
+printf '\nNext steps:\n'
+printf '  1. Connect to Wi-Fi or Ethernet.\n'
+printf '  2. Run: lapdroid-setup-android\n'
+printf '  3. Open Software or use flatpak after adding Flathub.\n'
+printf '  4. Running from USB and want this on disk? Launch "Install LuxenOS"\n'
+printf '     from the app menu, or run: calamares\n\n'
