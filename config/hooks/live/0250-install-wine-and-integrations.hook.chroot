@@ -1,0 +1,102 @@
+#!/bin/sh
+# Finish the Wine + .deb/.exe double-click integration and the glass theme:
+#   1. make sure LuxenOS helper scripts are executable (uploads through the
+#      GitHub web UI lose the executable bit)
+#   2. enable i386 multiarch and install 32-bit Wine from Debian's archive
+#   3. refresh the MIME / desktop-entry databases
+#   4. verify everything; FAIL THE BUILD if Wine or a helper is missing
+#
+# Nothing here touches logs, auditing, or shell history.
+
+set -eu
+
+log() { echo "[LuxenOS Wine/Deb] $*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+# 1. Permissions --------------------------------------------------------------
+for f in /usr/local/bin/luxenos-* /usr/libexec/luxenos/luxenos-pkg-root; do
+    if [ -f "$f" ]; then chmod 0755 "$f"; fi
+done
+chmod 0755 /usr/libexec/luxenos 2>/dev/null || true
+chmod 0644 /usr/share/polkit-1/actions/org.luxenos.pkg.policy \
+           /usr/share/applications/luxenos-deb-install.desktop \
+           /usr/share/applications/luxenos-wine-open.desktop \
+           /etc/xdg/mimeapps.list \
+           /etc/luxenos/glass.conf \
+           /etc/luxenos/wine.conf
+
+# 2. 32-bit Wine ----------------------------------------------------------------
+arch=$(dpkg --print-architecture)
+if [ "$arch" = amd64 ]; then
+    log "Enabling i386 multiarch for 32-bit Wine"
+    dpkg --add-architecture i386
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y wine32:i386 libwine:i386 \
+        || die "could not install wine32:i386 from the Debian archive"
+else
+    log "Architecture $arch: skipping wine32 (only needed on amd64)"
+fi
+
+# 3. Databases --------------------------------------------------------------------
+if command -v update-mime-database >/dev/null 2>&1; then
+    update-mime-database /usr/share/mime >/dev/null 2>&1 || log "WARNING: update-mime-database failed"
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications >/dev/null 2>&1 || log "WARNING: update-desktop-database failed"
+fi
+
+# 4. Verification -------------------------------------------------------------------
+installed() { [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ]; }
+
+installed wine64 || die "wine64 is not installed in the image"
+command -v wine >/dev/null 2>&1 || die "'wine' command missing"
+if [ "$arch" = amd64 ]; then
+    installed wine32:i386 || die "wine32:i386 is not installed in the image"
+fi
+log "Wine present: $(wine --version 2>/dev/null || echo 'version query failed')"
+
+for f in /usr/local/bin/luxenos-glass /usr/local/bin/luxenos-waybar \
+         /usr/local/bin/luxenos-controls /usr/local/bin/luxenos-polkit-agent \
+         /usr/local/bin/luxenos-deb-install /usr/local/bin/luxenos-wine-open \
+         /usr/local/bin/luxenos-session-init /usr/local/bin/luxenos-network \
+         /usr/local/bin/luxenos-lock /usr/local/bin/luxenos-setup-android \
+         /usr/libexec/luxenos/luxenos-pkg-root; do
+    [ -x "$f" ] || die "missing or not executable: $f"
+    sh -n "$f" || die "shell syntax error in $f"
+done
+
+if command -v desktop-file-validate >/dev/null 2>&1; then
+    desktop-file-validate /usr/share/applications/luxenos-deb-install.desktop \
+        || die "invalid luxenos-deb-install.desktop"
+    desktop-file-validate /usr/share/applications/luxenos-wine-open.desktop \
+        || die "invalid luxenos-wine-open.desktop"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import xml.dom.minidom as m; m.parse("/usr/share/polkit-1/actions/org.luxenos.pkg.policy")' \
+        || die "polkit policy is not well-formed XML"
+fi
+
+sh -n /etc/profile.d/luxenos-session.sh || die "shell syntax error in /etc/profile.d/luxenos-session.sh"
+
+# Graphical session programs the glass theme and session-init rely on.
+for prog in sway waybar wofi dunst swaylock zenity pkexec; do
+    command -v "$prog" >/dev/null 2>&1 || die "required program missing from the image: $prog"
+done
+# Network tray: optional at runtime (luxenos-network falls back to nmtui) but
+# it should be there; warn loudly if network-manager-gnome did not provide it.
+command -v nm-applet >/dev/null 2>&1 || log "WARNING: nm-applet missing (network-manager-gnome); no network tray icon"
+command -v nm-connection-editor >/dev/null 2>&1 || log "WARNING: nm-connection-editor missing"
+
+# The glass generator must run cleanly for a brand-new user.
+tmphome=$(mktemp -d)
+if ! HOME="$tmphome" XDG_CONFIG_HOME="$tmphome/.config" /usr/local/bin/luxenos-glass apply --files-only; then
+    rm -rf "$tmphome"
+    die "luxenos-glass failed to generate the theme"
+fi
+for f in waybar.css waybar.json wofi.css gtk3.css gtk4.css; do
+    [ -s "$tmphome/.config/luxenos/glass/$f" ] || { rm -rf "$tmphome"; die "glass theme file not generated: $f"; }
+done
+rm -rf "$tmphome"
+
+log "Wine, .deb/.exe handlers, MIME defaults and glass theme verified"

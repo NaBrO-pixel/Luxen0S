@@ -1,0 +1,47 @@
+#!/bin/sh
+# LuxenOS live session: boot the USB straight into the Calamares installer.
+#
+# Two pieces work together:
+#   * this hook: tty1 autologin for the live user (a systemd drop-in that only
+#     needs the user NAME - the account itself is created by live-config at
+#     boot, so it does not have to exist while the image is being built);
+#   * /etc/profile.d/luxenos-session.sh: after login on tty1 it starts Sway with
+#     /etc/luxenos-installer/kiosk-sway-config when the kernel command line
+#     contains boot=live (and not luxenos.session=desktop). An installed
+#     system has no boot=live, so it starts the normal desktop instead.
+#
+# Both live-only pieces are also removed from the installed system by the
+# Calamares shellprocess job (etc/calamares/modules/shellprocess-luxenos-cleanup.conf).
+
+set -eu
+
+log() {
+    echo "[LuxenOS Installer Kiosk] $*" >&2
+}
+
+# Must match the username passed to live-config (auto/config: USERNAME).
+LIVE_USERNAME="${USERNAME:-user}"
+
+case $LIVE_USERNAME in
+    *[!a-z0-9_-]*|'')
+        log "ERROR: invalid live username '$LIVE_USERNAME'"
+        exit 1
+        ;;
+esac
+
+for f in /etc/luxenos-installer/kiosk-sway-config /etc/profile.d/luxenos-session.sh; do
+    if [ ! -r "$f" ]; then
+        log "ERROR: $f is missing (expected from config/includes.chroot)"
+        exit 1
+    fi
+done
+
+log "Configuring tty1 autologin for live user '$LIVE_USERNAME'"
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf << UNIT
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin ${LIVE_USERNAME} --noclear %I \$TERM
+UNIT
+
+log "Live boot will go straight to the Calamares installer kiosk"
