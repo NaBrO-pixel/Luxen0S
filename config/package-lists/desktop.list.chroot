@@ -36,7 +36,10 @@ pipewire-pulse
 wireplumber
 pavucontrol-qt
 alsa-utils
-alsa-firmware
+# No alsa-firmware here: Debian has no such package (its nearest equivalent,
+# alsa-firmware-loaders, is for legacy cards that upload firmware at probe
+# time). Audio firmware comes from firmware-linux and firmware-misc-nonfree
+# in base.list.chroot.
 
 # File manager
 thunar
