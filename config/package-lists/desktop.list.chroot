@@ -1,6 +1,14 @@
-# Sway/Wayland desktop stack (this is what boots after install completes;
-# the live/install session itself uses only a minimal subset — see
-# config/hooks/live/0150-installer-kiosk.hook.chroot).
+# Sway/Wayland desktop stack. This is the desktop of the installed system
+# (and of the live session when booted with luxenos.session=desktop). The
+# default live session runs only the installer kiosk, see
+# config/hooks/live/0150-installer-kiosk.hook.chroot.
+#
+# Mandatory for the graphical session: sway swaylock swayidle waybar wofi
+# dunst foot polkit agent + pkexec/polkitd, zenity, fonts, adwaita-icon-theme,
+# network-manager-gnome (base list: nm-applet, nm-connection-editor).
+# Optional/nice-to-have: nwg-look, swappy, grim/slurp, thunar/tumbler.
+# SwayFX (blur, rounded corners, shadows) is optional and NOT in Debian; the
+# glass theme detects it at runtime and falls back to stock Sway.
 sway
 swaylock
 swayidle
@@ -8,6 +16,7 @@ waybar
 xwayland
 xdg-desktop-portal
 xdg-desktop-portal-wlr
+xdg-desktop-portal-gtk
 libwayland-dev
 libinput-dev
 foot
@@ -43,3 +52,26 @@ firefox-esr
 mpv
 evince
 gedit
+
+# Liquid-glass theme, .deb / .exe double-click integration
+zenity
+pkexec
+polkitd
+libnotify-bin
+desktop-file-utils
+shared-mime-info
+xdg-utils
+adwaita-icon-theme
+fonts-inter
+file
+libglib2.0-bin
+dconf-gsettings-backend
+dconf-service
+
+# xdg-desktop-portal-gtk is what delivers the dark/light colour scheme to GTK4/
+# libadwaita apps (verified: without a portal Settings backend they stay light).
+#
+# Session plumbing used by luxenos-session-init / luxenos-glass
+dbus-user-session
+dbus-bin
+procps

@@ -138,9 +138,10 @@ Disk Space Used: $(du -sh / 2>/dev/null | cut -f1)
 EOF
     
     # Keep only last 5 backups to save space
-    ls -t "$LUXENOS_BACKUP_DIR" | tail -n +6 | while read old_backup; do
+    ls -t "${LUXENOS_BACKUP_DIR:?}" | tail -n +6 | while IFS= read -r old_backup; do
+        [ -n "$old_backup" ] || continue
         log_warn "Removing old backup: $old_backup"
-        rm -rf "$LUXENOS_BACKUP_DIR/$old_backup"
+        rm -rf "${LUXENOS_BACKUP_DIR:?}/$old_backup"
     done
     
     log_info "✓ Backup created: $backup_path"

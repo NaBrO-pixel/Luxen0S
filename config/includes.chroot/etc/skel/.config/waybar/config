@@ -1,0 +1,48 @@
+{
+    "include": ["~/.config/luxenos/glass/waybar.json"],
+    "modules-left": ["sway/workspaces", "sway/mode"],
+    "modules-center": ["clock"],
+    "modules-right": ["custom/power-profile", "pulseaudio", "network", "battery", "tray", "custom/controls"],
+
+    "sway/workspaces": {
+        "disable-scroll": true,
+        "format": "{name}"
+    },
+    "clock": {
+        "format": "{:%a %d %b  %H:%M}",
+        "tooltip-format": "{:%A, %d %B %Y}"
+    },
+    "battery": {
+        "format": "{icon} {capacity}%",
+        "format-icons": ["", "", "", "", ""],
+        "format-charging": " {capacity}%"
+    },
+    "custom/power-profile": {
+        "exec": "luxenos-power-profile-status",
+        "return-type": "json",
+        "on-click": "luxenos-power-profile-cycle",
+        "interval": 15,
+        "tooltip": true
+    },
+    "network": {
+        "format-wifi": " {essid}",
+        "format-ethernet": " Connected",
+        "format-disconnected": "⚠ Offline",
+        "tooltip-format": "{ifname}: {ipaddr}",
+        "on-click": "luxenos-network"
+    },
+    "pulseaudio": {
+        "format": "{icon} {volume}%",
+        "format-muted": " Muted",
+        "format-icons": ["", "", ""],
+        "on-click": "pavucontrol-qt"
+    },
+    "tray": {
+        "spacing": 10
+    },
+    "custom/controls": {
+        "format": "\uf013",
+        "tooltip": false,
+        "on-click": "luxenos-controls"
+    }
+}

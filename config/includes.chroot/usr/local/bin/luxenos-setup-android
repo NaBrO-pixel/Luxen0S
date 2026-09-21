@@ -1,0 +1,61 @@
+#!/bin/sh
+# luxenos-setup-android - post-boot Android (Waydroid) setup: starts the
+# session, installs Aurora Store, and explains the optional Play Store step.
+
+APK=/usr/share/luxenos/apks/AuroraStore.apk
+
+echo ""
+echo "=== LuxenOS: Android / Play Store setup ==="
+echo ""
+
+if ! command -v waydroid >/dev/null 2>&1; then
+    echo "Waydroid is not installed on this system."
+    exit 1
+fi
+
+# Wait for Waydroid session to be running
+echo "Starting Waydroid session if needed..."
+if ! waydroid status >/dev/null 2>&1; then
+    waydroid session start >/dev/null 2>&1 || true
+fi
+sleep 3
+
+# Install Aurora Store (works without Google account, no certification needed)
+echo "Installing Aurora Store..."
+if [ -f "$APK" ]; then
+    if waydroid app install "$APK"; then
+        echo "Aurora Store installed. Launch it from the Waydroid UI to download any Play Store app."
+    else
+        echo "Aurora Store install failed - make sure Waydroid is running (waydroid session start)"
+    fi
+else
+    echo "Aurora Store APK not found. You can download it from:"
+    echo "  https://f-droid.org/packages/com.aurora.store/"
+fi
+
+cat <<'TEXT'
+
+=== Optional: Enable official Google Play Store ===
+
+Aurora Store covers most use cases. If you also want the official
+Play Store (requires a Google account), do the following:
+
+1. Get your Waydroid Android ID:
+     sudo waydroid shell
+     sqlite3 /data/data/com.google.android.gsf/databases/gservices.db \
+       "select * from main where name='android_id';"
+     exit
+
+2. Visit this URL on any browser and enter that Android ID:
+     https://www.google.com/android/uncertified
+
+3. Restart Waydroid:
+     waydroid session stop
+     waydroid session start
+
+4. Open Play Store in the Waydroid UI and sign in with your Google account.
+
+Note: Google certification can take up to 10 minutes to activate.
+Note: this step only applies to GAPPS images. VANILLA images do not
+include Google Play Services and cannot use the official Play Store.
+TEXT

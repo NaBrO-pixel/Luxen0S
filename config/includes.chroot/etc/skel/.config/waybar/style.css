@@ -1,0 +1,6 @@
+/* LuxenOS Waybar style.
+ *
+ * All colours, radii, opacity and animation come from the generated glass
+ * theme (tuned in /etc/luxenos/glass.conf, applied by `luxenos-glass apply`).
+ * Put your own overrides *below* the import so they win. */
+@import url("../luxenos/glass/waybar.css");

@@ -1,0 +1,259 @@
+#!/bin/sh
+# luxenos-deb-install - graphical .deb installer (double-click a .deb).
+#
+# Flow: validate the file -> show name/version/architecture and what apt would
+# additionally install or remove -> ask for confirmation -> authenticate with
+# polkit -> install through apt-get (dependencies resolved by apt) -> show a
+# progress bar and a clear success/failure message.
+#
+# No terminal window is ever opened, and nothing is hidden: the privileged
+# helper (luxenos-pkg-root) leaves the normal apt/dpkg logs untouched and also
+# writes /var/log/luxenos/pkg-helper.log.
+#
+# Usage: luxenos-deb-install [file.deb]     (no argument: pick a file)
+
+set -u
+
+TITLE="Install Debian Package"
+ROOT_HELPER=/usr/libexec/luxenos/luxenos-pkg-root
+MAX_BYTES=2147483648
+
+if ! command -v zenity >/dev/null 2>&1; then
+    echo "luxenos-deb-install: zenity is required" >&2
+    exit 1
+fi
+
+Z() { zenity "$@" 2>/dev/null; }
+err() { Z --error --title "$TITLE" --no-markup --width 480 --text "$1"; }
+note_dialog() { Z --info --title "$TITLE" --no-markup --width 480 --text "$1"; }
+
+if [ "$(id -u)" -eq 0 ]; then
+    err "Please run this as a normal user. It asks for administrator permission itself when needed."
+    exit 1
+fi
+
+WORK=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/luxenos-deb.XXXXXX") || exit 1
+# shellcheck disable=SC2317  # invoked via trap
+cleanup() { rm -rf "$WORK"; }
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+nl='
+'
+
+# --- pick / validate the file -------------------------------------------------
+
+file=${1:-}
+case $file in
+    file://*)
+        file=$(python3 -c 'import sys, urllib.parse as u; print(u.unquote(u.urlparse(sys.argv[1]).path))' "$file" 2>/dev/null)
+        ;;
+esac
+if [ -z "$file" ]; then
+    file=$(Z --file-selection --title "Choose a Debian package" \
+        --file-filter='Debian packages | *.deb') || exit 0
+fi
+
+if [ ! -f "$file" ]; then
+    err "This file could not be found:${nl}${file}"
+    exit 1
+fi
+if [ ! -r "$file" ]; then
+    err "You don't have permission to read this file:${nl}${file}"
+    exit 1
+fi
+size=$(stat -L -c %s -- "$file" 2>/dev/null || echo 0)
+if [ "$size" -gt "$MAX_BYTES" ]; then
+    err "This file is larger than 2 GiB, which is too big to be a normal package."
+    exit 1
+fi
+
+deb=$WORK/package.deb
+if ! cp -- "$file" "$deb"; then
+    err "The file could not be copied for inspection (disk full?)."
+    exit 1
+fi
+
+# Never hand anything to the installer that dpkg itself cannot parse.
+if ! dpkg-deb --field "$deb" Package >/dev/null 2>&1; then
+    err "This isn't a valid Debian package. The file may be damaged or incomplete, or it isn't a .deb at all.${nl}${nl}${file}"
+    exit 1
+fi
+
+name=$(dpkg-deb -f "$deb" Package)
+ver=$(dpkg-deb -f "$deb" Version)
+arch=$(dpkg-deb -f "$deb" Architecture)
+maint=$(dpkg-deb -f "$deb" Maintainer 2>/dev/null | head -n 1)
+desc=$(dpkg-deb -f "$deb" Description 2>/dev/null | head -n 1)
+sum=$(sha256sum "$deb" | cut -d' ' -f1)
+
+native=$(dpkg --print-architecture)
+case $arch in
+    all|"$native") ;;
+    *)
+        if ! dpkg --print-foreign-architectures | grep -qx "$arch"; then
+            err "This package is built for '$arch', but this computer uses '$native', so it cannot be installed."
+            exit 1
+        fi
+        ;;
+esac
+
+installed=""
+state=$(dpkg-query -W -f='${db:Status-Status} ${Version}\n' "$name" 2>/dev/null | head -n 1)
+case $state in
+    "installed "*) installed=${state#installed } ;;
+esac
+if [ -z "$installed" ]; then
+    kind="New installation"
+elif [ "$installed" = "$ver" ]; then
+    kind="Reinstall (this exact version is already installed)"
+elif dpkg --compare-versions "$ver" gt "$installed"; then
+    kind="Upgrade from version $installed"
+else
+    kind="DOWNGRADE from version $installed"
+fi
+
+# --- run a privileged step with a progress bar ---------------------------------
+
+progress_filter() {
+    while IFS= read -r line; do
+        case $line in
+            '@@RC '*) printf '%s' "${line#@@RC }" > "$WORK/rc" ;;
+            '@@STATUS '*) printf '# %s\n' "${line#@@STATUS }" ;;
+            '@@LOG '*) printf '%s\n' "${line#@@LOG }" >> "$WORK/log" ;;
+            dlstatus:*)
+                pct=$(printf '%s\n' "$line" | sed -n 's/^dlstatus:.*:\([0-9][0-9]*\)\.[0-9][0-9]*:.*/\1/p')
+                [ -n "$pct" ] && printf '%s\n' $(( pct * 40 / 100 ))
+                ;;
+            pmstatus:*)
+                pct=$(printf '%s\n' "$line" | sed -n 's/^pmstatus:.*:\([0-9][0-9]*\)\.[0-9][0-9]*:.*/\1/p')
+                [ -n "$pct" ] && printf '%s\n' $(( 40 + pct * 60 / 100 ))
+                msg=${line##*:}
+                [ -n "$msg" ] && printf '# %s\n' "$msg"
+                ;;
+            *) printf '%s\n' "$line" >> "$WORK/log" ;;
+        esac
+    done
+    printf '100\n'
+}
+
+# run_root "window title" "first text" helper-args...   -> sets RC
+run_root() {
+    ptitle=$1
+    ptext=$2
+    shift 2
+    : > "$WORK/log"
+    rm -f "$WORK/rc"
+    {
+        pkexec "$ROOT_HELPER" "$@" 2>&1
+        echo "@@RC $?"
+    } | progress_filter | Z --progress --title "$ptitle" --text "$ptext" \
+        --percentage=0 --auto-close --no-cancel --width 460
+    RC=$(cat "$WORK/rc" 2>/dev/null || echo 1)
+}
+
+auth_problem() {
+    case $1 in
+        126) return 0 ;;   # authentication dialog dismissed
+    esac
+    return 1
+}
+
+show_failure() {
+    {
+        printf '%s\n\n' "$1"
+        [ -s "$WORK/log" ] && cat "$WORK/log"
+        printf '\nThe full record is kept in /var/log/luxenos/pkg-helper.log and /var/log/apt/term.log\n'
+    } > "$WORK/failure.txt"
+    Z --text-info --title "$TITLE - problem" --filename="$WORK/failure.txt" --width 720 --height 420
+}
+
+# --- what would apt do? ----------------------------------------------------------
+
+simulate() {
+    LC_ALL=C apt-get -s -o Debug::NoLocking=1 install "$deb" > "$WORK/sim.txt" 2>&1
+}
+
+refreshed=0
+while ! simulate; do
+    if [ "$refreshed" -eq 0 ] && Z --question --title "$TITLE" --no-markup --width 500 \
+        --ok-label "Refresh and retry" --cancel-label "Cancel" \
+        --text "$name $ver needs other software that isn't available yet. The package lists may be out of date.${nl}${nl}Refresh the package lists (needs an internet connection and administrator permission) and try again?"; then
+        run_root "$TITLE" "Waiting for administrator permission..." update-lists
+        refreshed=1
+        if auth_problem "$RC"; then exit 0; fi
+        if [ "$RC" -ne 0 ]; then
+            show_failure "Refreshing the package lists failed (code $RC). Check your internet connection."
+            exit 1
+        fi
+        continue
+    fi
+    {
+        printf '%s %s cannot be installed.\n\napt reports:\n\n' "$name" "$ver"
+        grep -E '^(E:|The following| [^ ]+ : )' "$WORK/sim.txt" | head -n 30
+    } > "$WORK/failure.txt"
+    Z --text-info --title "$TITLE - cannot install" --filename="$WORK/failure.txt" --width 720 --height 380
+    exit 1
+done
+
+extra=$(sed -n 's/^Inst \([^ ]*\).*/\1/p' "$WORK/sim.txt" | grep -vx -- "$name" | tr '\n' ' ')
+removed=$(sed -n 's/^Remv \([^ ]*\).*/\1/p' "$WORK/sim.txt" | tr '\n' ' ')
+extra_n=$(printf '%s\n' "$extra" | wc -w)
+
+summary="Name: $name${nl}Version: $ver${nl}Architecture: $arch${nl}Type: $kind"
+[ -n "$maint" ] && summary="$summary${nl}Maintainer: $maint"
+[ -n "$desc" ] && summary="$summary${nl}${nl}$desc"
+if [ "$extra_n" -gt 0 ]; then
+    shown=$(printf '%s\n' "$extra" | cut -d' ' -f1-12)
+    summary="$summary${nl}${nl}Also installs or updates $extra_n other package(s) it depends on:${nl}$shown"
+    [ "$extra_n" -gt 12 ] && summary="$summary ... (see Details)"
+fi
+if [ -n "$removed" ]; then
+    summary="$summary${nl}${nl}WARNING - this will REMOVE: $removed"
+fi
+summary="$summary${nl}${nl}File: $file${nl}SHA-256: $sum${nl}${nl}Installing runs the package's own scripts with administrator rights. Only continue if you trust where this file came from."
+
+{
+    echo "=== Package information ==="
+    dpkg-deb --info "$deb" 2>&1
+    echo
+    echo "=== What apt would do (simulation) ==="
+    grep -E '^(Inst|Remv|Conf) ' "$WORK/sim.txt"
+    echo
+    echo "=== Files in the package (first 300) ==="
+    dpkg-deb --contents "$deb" 2>&1 | head -n 300
+} > "$WORK/details.txt"
+
+# --- confirm ---------------------------------------------------------------------
+
+while :; do
+    picked=$(Z --question --title "$TITLE" --no-markup --width 540 \
+        --ok-label "Install" --cancel-label "Cancel" --extra-button "Details" \
+        --text "$summary")
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        break
+    elif [ "$rc" -eq 1 ] && [ "$picked" = "Details" ]; then
+        Z --text-info --title "$TITLE - details" --filename="$WORK/details.txt" --width 760 --height 520
+    else
+        exit 0
+    fi
+done
+
+# --- install ---------------------------------------------------------------------
+
+run_root "Installing $name" "Waiting for administrator permission..." install-deb "$sum" "$deb"
+
+if [ "$RC" -eq 0 ]; then
+    note_dialog "$name $ver was installed successfully.${nl}${nl}You can find it in the application launcher."
+    exit 0
+fi
+if auth_problem "$RC"; then
+    exit 0
+fi
+if [ "$RC" -eq 127 ]; then
+    show_failure "Administrator permission could not be requested. Make sure you are an administrator (member of the 'sudo' group) and that a password prompt can appear."
+    exit 1
+fi
+show_failure "Installing $name $ver failed (code $RC). The package manager's messages are below. If the package was left partly installed, opening the file again will retry."
+exit 1

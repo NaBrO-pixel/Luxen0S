@@ -1,0 +1,52 @@
+#!/bin/sh
+# Quick system controls in the glass launcher (Super+C, or the gear in Waybar).
+# Pure wofi menu: no terminal, no extra daemon.
+
+MENU_PROMPT="Controls"
+
+pick() {
+    # pick PROMPT LINES  (items on stdin)
+    wofi --show dmenu --prompt "$1" --lines "$2" --width 360 \
+        --insensitive --cache-file /dev/null
+}
+
+confirm() {
+    ans=$(printf 'Yes\nNo\n' | pick "$1" 2)
+    [ "$ans" = "Yes" ]
+}
+
+choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 13
+Network & Wi-Fi
+Sound
+Appearance (GTK theme)
+Glass: Performance
+Glass: Balanced
+Glass: Rich
+Glass: Flat (no glass)
+Theme: Dark
+Theme: Light
+Power profile
+Lock screen
+Log out
+Restart
+Shut down
+ITEMS
+)
+
+case $choice in
+    "Network & Wi-Fi")          exec luxenos-network ;;
+    "Sound")                    exec pavucontrol-qt ;;
+    "Appearance (GTK theme)")   exec nwg-look ;;
+    "Glass: Performance")       exec luxenos-glass preset performance ;;
+    "Glass: Balanced")          exec luxenos-glass preset balanced ;;
+    "Glass: Rich")              exec luxenos-glass preset rich ;;
+    "Glass: Flat (no glass)")   exec luxenos-glass preset flat ;;
+    "Theme: Dark")              exec luxenos-glass theme dark ;;
+    "Theme: Light")             exec luxenos-glass theme light ;;
+    "Power profile")            exec luxenos-power-profile-cycle ;;
+    "Lock screen")              exec luxenos-lock ;;
+    "Log out")     confirm "Log out?"   && exec swaymsg exit ;;
+    "Restart")     confirm "Restart?"   && exec systemctl reboot ;;
+    "Shut down")   confirm "Shut down?" && exec systemctl poweroff ;;
+esac
+exit 0

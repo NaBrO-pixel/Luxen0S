@@ -57,7 +57,7 @@ fi
 
 printf '\nNext steps:\n'
 printf '  1. Connect to Wi-Fi or Ethernet.\n'
-printf '  2. Run: lapdroid-setup-android\n'
+printf '  2. Run: luxenos-setup-android\n'
 printf '  3. Open Software or use flatpak after adding Flathub.\n'
 printf '  4. Running from USB and want this on disk? Launch "Install LuxenOS"\n'
 printf '     from the app menu, or run: calamares\n\n'

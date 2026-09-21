@@ -1,0 +1,113 @@
+# LuxenOS default Sway config
+# Reload after editing with Super+Shift+C.
+
+set $mod Mod4
+set $term foot
+set $menu wofi --show drun
+set $controls luxenos-controls
+
+font pango:Inter 10
+
+# Glass look (gaps, borders, and - on SwayFX - blur/rounding/shadows) is
+# applied from one place: /etc/luxenos/glass.conf via `luxenos-glass`.
+# The values below are only the fallback if that helper is unavailable.
+default_border pixel 1
+gaps inner 6
+gaps outer 3
+exec_always luxenos-glass apply
+
+# Output / wallpaper.
+#
+# Single-monitor laptops: the wildcard line below covers the built-in panel.
+# Multi-monitor setups: add one explicit `output <name> bg ...` line per
+# connector (find names with `swaymsg -t get_outputs`) *above* the wildcard,
+# e.g.:
+#   output eDP-1 bg /usr/share/backgrounds/luxenos/wallpaper.png fill
+#   output HDMI-A-1 bg /usr/share/backgrounds/luxenos/wallpaper.png fill pos 1920 0
+output * bg /usr/share/backgrounds/luxenos/wallpaper.png fill
+
+# Idle and lock behavior.
+exec swayidle -w \
+    timeout 300 'luxenos-lock' \
+    timeout 600 'swaymsg "output * dpms off"' \
+    resume 'swaymsg "output * dpms on"' \
+    before-sleep 'luxenos-lock'
+
+# Status bar.
+# (luxenos-waybar refreshes the generated glass theme, then starts waybar.)
+bar {
+    swaybar_command luxenos-waybar
+}
+
+# Core bindings.
+bindsym $mod+Return exec $term
+bindsym $mod+d exec $menu
+bindsym $mod+Shift+q kill
+bindsym $mod+Shift+c reload
+bindsym $mod+Shift+e exec swaymsg exit
+bindsym $mod+l exec luxenos-lock
+
+# Screenshots and annotation.
+# Print          -> full screen capture to clipboard + ~/Pictures
+# Shift+Print     -> select a region, then open it in swappy to annotate
+bindsym Print exec grim - | wl-copy && grim ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
+bindsym $mod+Shift+s exec grim -g "$(slurp)" - | swappy -f -
+
+# Power profile (tied to tlp; also shown/clickable in Waybar).
+bindsym $mod+p exec luxenos-power-profile-cycle
+
+# Quick controls (network, sound, glass intensity, power) in a glass menu.
+bindsym $mod+c exec $controls
+
+# Android helpers.
+bindsym $mod+a exec waydroid show-full-ui
+bindsym $mod+Shift+a exec foot -e luxenos-setup-android
+bindsym $mod+Shift+h exec foot -e luxenos-health-check
+
+# Installer (only meaningful when running the live image).
+bindsym $mod+Shift+i exec calamares
+
+# Focus.
+bindsym $mod+Left focus left
+bindsym $mod+Down focus down
+bindsym $mod+Up focus up
+bindsym $mod+Right focus right
+
+# Move.
+bindsym $mod+Shift+Left move left
+bindsym $mod+Shift+Down move down
+bindsym $mod+Shift+Up move up
+bindsym $mod+Shift+Right move right
+
+# Workspaces.
+bindsym $mod+1 workspace number 1
+bindsym $mod+2 workspace number 2
+bindsym $mod+3 workspace number 3
+bindsym $mod+4 workspace number 4
+bindsym $mod+Shift+1 move container to workspace number 1
+bindsym $mod+Shift+2 move container to workspace number 2
+bindsym $mod+Shift+3 move container to workspace number 3
+bindsym $mod+Shift+4 move container to workspace number 4
+
+# Layout.
+bindsym $mod+f fullscreen
+bindsym $mod+Shift+space floating toggle
+
+# Volume and brightness laptop keys.
+bindsym XF86AudioRaiseVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+bindsym XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bindsym XF86AudioMute exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bindsym XF86MonBrightnessUp exec brightnessctl set +5%
+bindsym XF86MonBrightnessDown exec brightnessctl set 5%-
+
+# Session bring-up, once per login: exports the Wayland environment to D-Bus,
+# generates the glass theme, then starts the polkit agent (graphical password
+# prompts), dunst (notifications) and nm-applet (network tray, only when
+# NetworkManager is running). See /usr/local/bin/luxenos-session-init.
+exec luxenos-session-init
+
+# Waydroid may still need its first network-backed initialization, so ignore
+# session-start failures here and use the setup helper (Super+Shift+A).
+exec sh -c 'waydroid session start >/dev/null 2>&1 || true'
+
+include /etc/sway/config.d/*

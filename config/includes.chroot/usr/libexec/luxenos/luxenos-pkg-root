@@ -1,0 +1,186 @@
+#!/bin/sh
+# luxenos-pkg-root - the ONLY privileged part of LuxenOS's graphical package
+# installer. It is started through pkexec (polkit action org.luxenos.pkg.install,
+# admin authentication required every time) by luxenos-deb-install and
+# luxenos-wine-open. It is not meant to be run by hand.
+#
+# Subcommands (everything else is rejected):
+#   install-deb SHA256 /abs/path/file.deb   install one .deb through apt-get
+#   update-lists                            apt-get update
+#   enable-wine32                           add i386 + install wine32:i386
+#
+# Design rules:
+#   * the .deb is read as the *calling user* (so this cannot be used to read
+#     files the user could not read), copied into a root-owned staging dir and
+#     checked against the SHA-256 the user confirmed, so what is installed is
+#     exactly what was shown in the confirmation dialog;
+#   * dependencies are resolved by apt-get, never by hand;
+#   * nothing is hidden: apt/dpkg keep their normal logs, and every request is
+#     also appended to /var/log/luxenos/pkg-helper.log and to the journal.
+#
+# Output protocol (read by the GUI): "@@STATUS text", "@@LOG text", plus
+# apt's own Status-Fd lines (dlstatus:/pmstatus:).
+
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 022
+
+LOGDIR=/var/log/luxenos
+LOG=$LOGDIR/pkg-helper.log
+LOCK=/run/luxenos-pkg.lock
+CACHE=/var/cache/luxenos-pkg
+MAX_DEB_BYTES=2147483648
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "@@LOG luxenos-pkg-root must run as root (through pkexec)."
+    exit 1
+fi
+
+mkdir -p "$LOGDIR" "$CACHE"
+chmod 755 "$LOGDIR" "$CACHE"
+touch "$LOG"
+chmod 644 "$LOG"
+
+note() {
+    printf '%s uid=%s %s\n' "$(date -Is)" "${PKEXEC_UID:-?}" "$*" >> "$LOG"
+    logger -t luxenos-pkg -- "uid=${PKEXEC_UID:-?} $*" 2>/dev/null || true
+}
+
+status() { printf '@@STATUS %s\n' "$*"; }
+
+fail() {
+    printf '@@LOG ERROR: %s\n' "$*"
+    note "FAILED: $*"
+    exit 1
+}
+
+case ${PKEXEC_UID:-} in
+    ''|*[!0-9]*) fail "must be started through pkexec" ;;
+esac
+
+exec 9>"$LOCK"
+flock -w 180 9 || fail "another package operation is still running"
+
+# run_apt ARGS... : apt output goes to the permanent log, progress lines
+# (Status-Fd=3) go to stdout for the progress bar.
+run_apt() {
+    env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
+        apt-get -y -o APT::Status-Fd=3 -o DPkg::Lock::Timeout=120 \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        "$@" 3>&1 >>"$LOG" 2>&1
+}
+
+log_size() { wc -c < "$LOG"; }
+
+report_failure() {
+    tail -c +"$(( $1 + 1 ))" "$LOG" | tr '\r' '\n' | grep -v -e '^(Reading database' -e '^$' \
+        | tail -n 40 | while IFS= read -r l; do
+        printf '@@LOG %s\n' "$l"
+    done
+}
+
+do_apt() {   # do_apt DESCRIPTION apt-args...
+    desc=$1
+    shift
+    off=$(log_size)
+    if run_apt "$@"; then
+        note "OK: $desc"
+        return 0
+    else
+        rc=$?
+        report_failure "$off"
+        note "apt-get failed (rc=$rc): $desc"
+        exit "$rc"
+    fi
+}
+
+do_install_deb() {
+    want=$1
+    src=$2
+    case $want in
+        ''|*[!0-9a-f]*) fail "bad checksum argument" ;;
+    esac
+    [ "${#want}" -eq 64 ] || fail "bad checksum argument"
+    case $src in
+        /*) ;;
+        *) fail "package path must be absolute" ;;
+    esac
+    case $src in
+        *'
+'*) fail "invalid package path" ;;
+    esac
+
+    uid=$PKEXEC_UID
+    gid=$(id -g "$uid") || fail "unknown user"
+    asuser() { setpriv --reuid="$uid" --regid="$gid" --init-groups -- "$@"; }
+
+    asuser test -f "$src" || fail "not a readable regular file: $src"
+    size=$(asuser stat -L -c %s -- "$src") || fail "cannot read $src"
+    [ "$size" -le "$MAX_DEB_BYTES" ] || fail "package is larger than 2 GiB"
+
+    stage=$(mktemp -d "$CACHE/stage.XXXXXX")
+    trap 'rm -rf "$stage"' EXIT
+    chmod 755 "$stage"
+    deb=$stage/package.deb
+
+    asuser cat -- "$src" > "$deb" || fail "could not read $src"
+    chmod 644 "$deb"
+
+    got=$(sha256sum "$deb" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || fail "the file changed after it was confirmed; nothing was installed"
+
+    dpkg-deb --field "$deb" Package >/dev/null 2>&1 || fail "not a valid Debian package"
+    pkg=$(dpkg-deb -f "$deb" Package)
+    ver=$(dpkg-deb -f "$deb" Version)
+    case $pkg in
+        [a-z0-9]*) ;;
+        *) fail "invalid package name" ;;
+    esac
+    case $pkg in
+        *[!a-z0-9+.-]*) fail "invalid package name" ;;
+    esac
+
+    note "install-deb package=$pkg version=$ver sha256=$got source=$src"
+    status "Installing $pkg $ver..."
+    do_apt "install $pkg $ver" install "$deb"
+    status "Finished installing $pkg"
+}
+
+do_update_lists() {
+    note "update-lists"
+    status "Refreshing package lists..."
+    do_apt "update" update
+}
+
+do_enable_wine32() {
+    [ "$(dpkg --print-architecture)" = amd64 ] || fail "32-bit support is only needed on amd64"
+    note "enable-wine32"
+    if ! dpkg --print-foreign-architectures | grep -qx i386; then
+        dpkg --add-architecture i386
+        note "added i386 architecture"
+    fi
+    status "Refreshing package lists..."
+    do_apt "update (wine32)" update
+    status "Installing 32-bit Windows support..."
+    do_apt "install wine32:i386" install wine32:i386
+    status "Finished"
+}
+
+case ${1:-} in
+    install-deb)
+        [ $# -eq 3 ] || fail "usage: install-deb SHA256 PATH"
+        do_install_deb "$2" "$3"
+        ;;
+    update-lists)
+        [ $# -eq 1 ] || fail "usage: update-lists"
+        do_update_lists
+        ;;
+    enable-wine32)
+        [ $# -eq 1 ] || fail "usage: enable-wine32"
+        do_enable_wine32
+        ;;
+    *)
+        fail "unknown action"
+        ;;
+esac

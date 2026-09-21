@@ -1,0 +1,20 @@
+# Windows-program compatibility, all from Debian 13's own archive (no
+# third-party binaries).
+#
+# wine / wine64 / libwine : 64-bit Wine (the loader for 64-bit programs)
+# fonts-wine              : fonts Wine needs for readable Windows UIs
+#
+# wine32:i386 and libwine:i386 (needed by 32-bit programs, which includes
+# most installers) are NOT listed here on purpose: they need the i386
+# multiarch architecture enabled first, so config/hooks/live/
+# 0250-install-wine-and-integrations.hook.chroot adds it and installs them,
+# then fails the build if Wine is not actually present.
+#
+# wine-binfmt is deliberately NOT installed: it would let any .exe with the
+# executable bit run straight through Wine from a terminal, bypassing the
+# graphical handler (luxenos-wine-open) that validates the file and shows
+# errors.
+wine
+wine64
+libwine
+fonts-wine

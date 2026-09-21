@@ -1,0 +1,13 @@
+#!/bin/sh
+# Open the best available NetworkManager UI. Used by Waybar and the Controls menu.
+if command -v nm-connection-editor >/dev/null 2>&1; then
+    exec nm-connection-editor
+fi
+if command -v nmtui >/dev/null 2>&1 && command -v foot >/dev/null 2>&1; then
+    exec foot -e nmtui
+fi
+if command -v notify-send >/dev/null 2>&1; then
+    notify-send -a LuxenOS "Network settings unavailable" \
+        "Install network-manager-gnome (nm-connection-editor) or use nmtui."
+fi
+exit 1
