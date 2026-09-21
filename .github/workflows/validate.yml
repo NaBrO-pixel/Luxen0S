@@ -1,0 +1,34 @@
+name: Validate LuxenOS release tree
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ripgrep (used by tools/validate-release-tree)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Run tools/validate-release-tree
+        run: ./tools/validate-release-tree
+
+  lb-config-dry-run:
+    runs-on: ubuntu-latest
+    needs: validate-tree
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install live-build
+        run: sudo apt-get update && sudo apt-get install -y live-build
+
+      - name: lb config (no build)
+        run: sudo lb config
+        # A full `lb build` + QEMU boot smoke test is a longer-running job
+        # tracked as a follow-up; this only proves the config step itself
+        # is well-formed.

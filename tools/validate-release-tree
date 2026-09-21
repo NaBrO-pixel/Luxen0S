@@ -1,5 +1,5 @@
 #!/bin/sh
-# Validate that the LuxenOS build tree is merge-clean and build-layout ready.
+# Validate that the LuxenOS live-build tree is merge-clean and build-layout ready.
 
 set -eu
 
@@ -41,6 +41,7 @@ check_file config/package-lists/desktop.list.chroot
 check_file config/package-lists/android.list.chroot
 check_file config/package-lists/installer.list.chroot
 check_file config/package-lists/security.list.chroot
+check_file config/package-lists/wine.list.chroot
 
 # Hooks
 check_executable config/hooks/live/0100-install-waydroid.hook.chroot
@@ -49,6 +50,8 @@ check_executable config/hooks/live/0150-installer-kiosk.hook.chroot
 check_shell_syntax config/hooks/live/0150-installer-kiosk.hook.chroot
 check_executable config/hooks/live/0200-configure-premium-defaults.hook.chroot
 check_shell_syntax config/hooks/live/0200-configure-premium-defaults.hook.chroot
+check_executable config/hooks/live/0250-install-wine-and-integrations.hook.chroot
+check_shell_syntax config/hooks/live/0250-install-wine-and-integrations.hook.chroot
 
 # Desktop / skel configs (what the *installed* system boots into)
 check_file config/includes.chroot/etc/skel/.config/sway/config
@@ -77,11 +80,104 @@ check_file config/includes.chroot/etc/luxenos-version
 check_executable config/hooks/live/0300-setup-auto-updates.hook.chroot
 check_shell_syntax config/hooks/live/0300-setup-auto-updates.hook.chroot
 
+# Liquid-glass theme, .deb / .exe double-click integration
+check_file config/includes.chroot/etc/luxenos/glass.conf
+check_file config/includes.chroot/etc/luxenos/wine.conf
+check_file config/includes.chroot/etc/xdg/mimeapps.list
+check_file config/includes.chroot/etc/skel/.config/wofi/config
+check_file config/includes.chroot/etc/skel/.config/gtk-3.0/gtk.css
+check_file config/includes.chroot/etc/skel/.config/gtk-4.0/gtk.css
+check_file config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy
+check_file config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop
+check_file config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop
+for script in \
+    config/includes.chroot/usr/local/bin/luxenos-glass \
+    config/includes.chroot/usr/local/bin/luxenos-waybar \
+    config/includes.chroot/usr/local/bin/luxenos-controls \
+    config/includes.chroot/usr/local/bin/luxenos-polkit-agent \
+    config/includes.chroot/usr/local/bin/luxenos-deb-install \
+    config/includes.chroot/usr/local/bin/luxenos-wine-open \
+    config/includes.chroot/usr/local/bin/luxenos-session-init \
+    config/includes.chroot/usr/local/bin/luxenos-network \
+    config/includes.chroot/usr/local/bin/luxenos-lock \
+    config/includes.chroot/usr/local/bin/luxenos-setup-android \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root
+do
+    check_executable "$script"
+    check_shell_syntax "$script"
+done
+
+check_file config/includes.chroot/etc/profile.d/luxenos-session.sh
+check_shell_syntax config/includes.chroot/etc/profile.d/luxenos-session.sh
+check_file config/includes.chroot/usr/share/applications/luxenos-android-setup.desktop
+check_file config/includes.chroot/etc/calamares/modules/shellprocess-luxenos-cleanup.conf
+check_file config/includes.chroot/etc/calamares/modules/removeuser.conf
+
+# Every module named in the Calamares sequence must have a config or be a
+# stock Calamares module (guards against re-introducing a nonexistent one).
+if grep -qE '^ *- (removefiles|displaymanager)$' config/includes.chroot/etc/calamares/settings.conf; then
+    fail "calamares settings.conf lists removefiles/displaymanager (not available in LuxenOS)"
+fi
+
+# Branding: no stale internal "lapdroid" references (old project name).
+if grep -rIl --exclude-dir=.git --exclude='*.tar.gz' --exclude=validate-release-tree -i 'lapdroid' . 2>/dev/null | grep -q .; then
+    fail "stale 'lapdroid' references remain: $(grep -rIl --exclude-dir=.git --exclude='*.tar.gz' --exclude=validate-release-tree -i 'lapdroid' . | tr '\n' ' ')"
+fi
+
+# Glass config keys documented in glass.conf must all be understood by the generator.
+# shellcheck disable=SC2013
+for key in $(sed -n 's/^#\{0,1\}\(GLASS_[A-Z_]*\)=.*/\1/p' config/includes.chroot/etc/luxenos/glass.conf); do
+    grep -q "$key" config/includes.chroot/usr/local/bin/luxenos-glass \
+        || fail "glass.conf documents $key but luxenos-glass does not use it"
+done
+
+# The polkit action must point at the exact helper path that ships in the image.
+grep -q '/usr/libexec/luxenos/luxenos-pkg-root</annotate>' \
+    config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy \
+    || fail "polkit policy does not reference /usr/libexec/luxenos/luxenos-pkg-root"
+
+# Both handlers must be the MIME defaults for what they claim to handle.
+for mime in application/vnd.debian.binary-package \
+            application/vnd.microsoft.portable-executable application/x-msi; do
+    grep -q "^$mime=luxenos-" config/includes.chroot/etc/xdg/mimeapps.list \
+        || fail "mimeapps.list has no LuxenOS default for $mime"
+done
+
+# Wine must be requested (32-bit half is installed by hook 0250).
+grep -qx 'wine64' config/package-lists/wine.list.chroot || fail "wine64 missing from wine.list.chroot"
+
+# The glass generator must run under plain POSIX sh for a brand-new user.
+glass_home=$(mktemp -d)
+if ! HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass apply --files-only >/dev/null 2>&1; then
+    rm -rf "$glass_home"
+    fail "luxenos-glass apply failed"
+fi
+[ -s "$glass_home/.config/luxenos/glass/waybar.css" ] || { rm -rf "$glass_home"; fail "luxenos-glass produced no waybar.css"; }
+for preset in performance balanced rich; do
+    mkdir -p "$glass_home/.config/luxenos"
+    printf 'GLASS_PRESET=%s\nGLASS_REDUCE_MOTION=yes\nGLASS_OPACITY=abc\n' "$preset" > "$glass_home/.config/luxenos/glass.conf"
+    HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+        LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+        sh config/includes.chroot/usr/local/bin/luxenos-glass apply --files-only >/dev/null 2>&1 \
+        || { rm -rf "$glass_home"; fail "luxenos-glass apply failed for preset $preset (invalid value must not break it)"; }
+    grep -q 'transition: none' "$glass_home/.config/luxenos/glass/waybar.css" \
+        || { rm -rf "$glass_home"; fail "GLASS_REDUCE_MOTION=yes did not disable transitions ($preset)"; }
+done
+rm -rf "$glass_home"
+
+if command -v desktop-file-validate >/dev/null 2>&1; then
+    desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop \
+        || fail "invalid luxenos-deb-install.desktop"
+    desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop \
+        || fail "invalid luxenos-wine-open.desktop"
+fi
+
 # Kiosk / installer boot experience (what the live disc itself boots into)
 check_file config/includes.chroot/etc/luxenos-installer/kiosk-sway-config
 check_file config/includes.chroot/etc/calamares/branding/luxenos/branding.desc
 check_file config/includes.chroot/etc/calamares/settings.conf
-check_file config/includes.chroot/etc/calamares/modules/removefiles.conf
 
 # Branding
 check_file config/includes.chroot/usr/share/backgrounds/luxenos/wallpaper.png

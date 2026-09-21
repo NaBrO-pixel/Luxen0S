@@ -1,0 +1,329 @@
+#!/bin/sh
+# luxenos-wine-open - double-click a Windows program (.exe / .msi) and run it
+# with Wine, with graphical errors instead of terminal output.
+#
+# Runs strictly as the current user with a per-user Wine prefix (~/.wine by
+# default). It refuses to run as root and never asks for administrator rights;
+# a program that wants "administrator" inside Windows gets Wine's normal
+# behaviour, not Linux root.
+#
+# Checks before launching: readable file, valid PE header, CPU architecture
+# Wine can run, 32-bit support installed when needed, prefix owned by the
+# user. First run creates the prefix. No terminal window is ever opened.
+#
+# Usage: luxenos-wine-open [program.exe|installer.msi]   (no argument: pick)
+
+set -u
+
+TITLE="Windows Program (Wine)"
+SYS_CONF=/etc/luxenos/wine.conf
+USER_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/luxenos/wine.conf"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/luxenos"
+LOGFILE="$STATE_DIR/wine-last-run.log"
+ROOT_HELPER=/usr/libexec/luxenos/luxenos-pkg-root
+
+nl='
+'
+
+if ! command -v zenity >/dev/null 2>&1; then
+    echo "luxenos-wine-open: zenity is required" >&2
+    exit 1
+fi
+
+Z() { zenity "$@" 2>/dev/null; }
+err() { Z --error --title "$TITLE" --no-markup --width 500 --text "$1"; }
+
+# --- config (whitelist parser, never sourced) ----------------------------------
+
+LUXENOS_WINE_PREFIX=""
+LUXENOS_WINE_CONFIRM=no
+LUXENOS_WINE_QUICKFAIL_SECS=8
+
+load_conf() {
+    [ -r "$1" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        case $line in ''|'#'*) continue ;; esac
+        case $line in *=*) ;; *) continue ;; esac
+        key=${line%%=*}
+        val=${line#*=}
+        case $key in
+            LUXENOS_WINE_PREFIX|LUXENOS_WINE_CONFIRM|LUXENOS_WINE_QUICKFAIL_SECS) ;;
+            *) continue ;;
+        esac
+        case $val in *[!A-Za-z0-9/._\ ~-]*) continue ;; esac
+        eval "$key=\$val"
+    done < "$1"
+}
+load_conf "$SYS_CONF"
+load_conf "$USER_CONF"
+
+case $LUXENOS_WINE_QUICKFAIL_SECS in ''|*[!0-9]*) LUXENOS_WINE_QUICKFAIL_SECS=8 ;; esac
+case $LUXENOS_WINE_CONFIRM in yes|no) ;; *) LUXENOS_WINE_CONFIRM=no ;; esac
+WINEPREFIX=${LUXENOS_WINE_PREFIX:-$HOME/.wine}
+case $WINEPREFIX in "~"/*) WINEPREFIX="$HOME/${WINEPREFIX#\~/}" ;; esac
+export WINEPREFIX
+
+# --- safety: never as root -----------------------------------------------------
+
+if [ "$(id -u)" -eq 0 ]; then
+    err "Windows programs are never run as administrator (root). Please open this file as your normal user."
+    exit 1
+fi
+
+WORK=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/luxenos-wine.XXXXXX") || exit 1
+# shellcheck disable=SC2317  # invoked via trap
+cleanup() { rm -rf "$WORK"; }
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+# --- pick / validate the file --------------------------------------------------
+
+file=${1:-}
+case $file in
+    file://*)
+        file=$(python3 -c 'import sys, urllib.parse as u; print(u.unquote(u.urlparse(sys.argv[1]).path))' "$file" 2>/dev/null)
+        ;;
+esac
+if [ -z "$file" ]; then
+    file=$(Z --file-selection --title "Choose a Windows program" \
+        --file-filter='Windows programs | *.exe *.EXE *.msi *.MSI') || exit 0
+fi
+
+if [ ! -f "$file" ]; then
+    err "This file could not be found:${nl}${file}"
+    exit 1
+fi
+if [ ! -r "$file" ]; then
+    err "You don't have permission to read this file:${nl}${file}${nl}${nl}Check the file's permissions (right-click > Properties > Permissions)."
+    exit 1
+fi
+abs=$(readlink -f -- "$file")
+base=$(basename -- "$abs")
+dir=$(dirname -- "$abs")
+size=$(stat -L -c %s -- "$abs" 2>/dev/null || echo 0)
+
+lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+is_msi=no
+case $lower in *.msi) is_msi=yes ;; esac
+
+# little-endian readers via od (no bashisms, no extra packages)
+u16() {
+    od -An -tu1 -j "$2" -N2 -- "$1" | {
+        read -r a b
+        echo $(( ${a:-0} + ${b:-0} * 256 ))
+    }
+}
+u32() {
+    od -An -tu1 -j "$2" -N4 -- "$1" | {
+        read -r a b c d
+        echo $(( ${a:-0} + ${b:-0} * 256 + ${c:-0} * 65536 + ${d:-0} * 16777216 ))
+    }
+}
+
+need32=no
+if [ "$is_msi" = no ]; then
+    if [ "$size" -lt 64 ]; then
+        err "This file is too small to be a Windows program, so it is probably damaged or incomplete:${nl}${base}"
+        exit 1
+    fi
+    magic=$(head -c 2 -- "$abs" 2>/dev/null)
+    if [ "$magic" != "MZ" ]; then
+        kind=$(file -b -- "$abs" 2>/dev/null | cut -c1-80)
+        err "This isn't a Windows program. It has the .exe name but not the contents of one${kind:+ (it looks like: $kind)}.${nl}${nl}${base}"
+        exit 1
+    fi
+    pe=$(u32 "$abs" 60)
+    if [ "$pe" -lt 64 ] || [ $(( pe + 26 )) -gt "$size" ]; then
+        err "This is a DOS or 16-bit Windows program, or a damaged file. Wine on this system runs 32-bit and 64-bit Windows programs only.${nl}${nl}${base}"
+        exit 1
+    fi
+    sig=$(od -An -tx1 -j "$pe" -N4 -- "$abs" | tr -d ' \n')
+    case $sig in
+        50450000) ;;
+        4e45*|4c45*|4c58*)
+            err "This is an old 16-bit Windows/DOS program, which Wine on this system cannot run.${nl}${nl}${base}"
+            exit 1 ;;
+        *)
+            err "The Windows header of this file is damaged, so it cannot be run. Try downloading it again.${nl}${nl}${base}"
+            exit 1 ;;
+    esac
+    machine=$(u16 "$abs" $(( pe + 4 )))
+    chars=$(u16 "$abs" $(( pe + 22 )))
+    if [ $(( chars / 8192 % 2 )) -eq 1 ]; then
+        err "This is a Windows library (DLL), not a program, so there is nothing to open.${nl}${nl}${base}"
+        exit 1
+    fi
+    case $machine in
+        332)   need32=yes ;;   # 0x014c  x86
+        34404) ;;              # 0x8664  x86-64
+        43620|452|448|42561)
+            err "This program was built for ARM processors and cannot run on this computer.${nl}${nl}${base}"
+            exit 1 ;;
+        512)
+            err "This program was built for Itanium processors and cannot run on this computer.${nl}${nl}${base}"
+            exit 1 ;;
+        *)
+            err "This program is built for a processor type Wine cannot run (code $machine).${nl}${nl}${base}"
+            exit 1 ;;
+    esac
+fi
+
+# --- is Wine usable? -----------------------------------------------------------
+
+pkg_installed() {
+    [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ]
+}
+
+if ! command -v wine >/dev/null 2>&1 || ! pkg_installed wine64; then
+    err "Wine is not installed correctly on this system (the 64-bit Wine package is missing). Reinstall the 'wine64' package."
+    exit 1
+fi
+
+# --- 32-bit support (most Windows installers are 32-bit) -----------------------
+
+# shellcheck disable=SC2317  # helper functions are called below
+progress_filter() {
+    while IFS= read -r line; do
+        case $line in
+            '@@RC '*) printf '%s' "${line#@@RC }" > "$WORK/rc" ;;
+            '@@STATUS '*) printf '# %s\n' "${line#@@STATUS }" ;;
+            '@@LOG '*) printf '%s\n' "${line#@@LOG }" >> "$WORK/log" ;;
+            pmstatus:*|dlstatus:*)
+                pct=$(printf '%s\n' "$line" | sed -n 's/^[a-z]*status:.*:\([0-9][0-9]*\)\.[0-9][0-9]*:.*/\1/p')
+                [ -n "$pct" ] && printf '%s\n' "$pct"
+                ;;
+            *) printf '%s\n' "$line" >> "$WORK/log" ;;
+        esac
+    done
+    printf '100\n'
+}
+
+if [ "$need32" = yes ] && ! pkg_installed wine32:i386; then
+    if [ "$(dpkg --print-architecture)" != amd64 ] || [ ! -x "$ROOT_HELPER" ]; then
+        err "This program needs 32-bit Windows support (the 'wine32' package), which cannot be set up automatically here."
+        exit 1
+    fi
+    if ! Z --question --title "$TITLE" --no-markup --width 500 \
+        --ok-label "Install" --cancel-label "Cancel" \
+        --text "This program is a 32-bit Windows program. 32-bit Windows support isn't installed yet.${nl}${nl}Install it now? (Needs an internet connection and administrator permission.)"; then
+        exit 0
+    fi
+    : > "$WORK/log"
+    {
+        pkexec "$ROOT_HELPER" enable-wine32 2>&1
+        echo "@@RC $?"
+    } | progress_filter | Z --progress --title "$TITLE" \
+        --text "Waiting for administrator permission..." \
+        --percentage=0 --auto-close --no-cancel --width 460
+    rc=$(cat "$WORK/rc" 2>/dev/null || echo 1)
+    case $rc in
+        0) ;;
+        126) exit 0 ;;
+        *)
+            { printf '32-bit support could not be installed (code %s).\n\n' "$rc"; cat "$WORK/log" 2>/dev/null; } > "$WORK/failure.txt"
+            Z --text-info --title "$TITLE" --filename="$WORK/failure.txt" --width 720 --height 380
+            exit 1 ;;
+    esac
+fi
+
+# --- prefix: ownership, creation -----------------------------------------------
+
+if [ -e "$WINEPREFIX" ] && [ ! -O "$WINEPREFIX" ]; then
+    err "The Wine folder $WINEPREFIX belongs to another user (probably because Wine was once run with sudo), so it cannot be used.${nl}${nl}Ask an administrator to change its owner to you, or set a different folder in ~/.config/luxenos/wine.conf (LUXENOS_WINE_PREFIX)."
+    exit 1
+fi
+if [ -d "$WINEPREFIX" ] && [ ! -w "$WINEPREFIX" ]; then
+    err "You don't have permission to write to the Wine folder $WINEPREFIX, so Windows programs cannot run."
+    exit 1
+fi
+
+mkdir -p "$STATE_DIR" 2>/dev/null
+
+# shellcheck disable=SC2129  # separate redirects are intentional (per-command timeouts)
+init_prefix() {
+    printf '' > "$LOGFILE" 2>/dev/null
+    {
+        printf '# Setting up the Windows environment (first run only)...\n'
+        # No network pop-ups for Mono/Gecko; nothing is downloaded automatically.
+        WINEDLLOVERRIDES="mscoree,mshtml=" WINEDEBUG=-all \
+            timeout 300 wineboot --init >> "$LOGFILE" 2>&1
+        timeout 120 wineserver -w >> "$LOGFILE" 2>&1
+        # Installers may register file associations; keep Wine from taking
+        # over how LuxenOS opens ordinary files, but keep Start-menu entries.
+        WINEDEBUG=-all timeout 60 wine reg add \
+            'HKCU\Software\Wine\FileOpenAssociations' /v Enable /d N /f >> "$LOGFILE" 2>&1
+        timeout 60 wineserver -w >> "$LOGFILE" 2>&1
+    } | Z --progress --pulsate --auto-close --no-cancel --title "$TITLE" \
+        --text "Setting up the Windows environment..." --width 460
+}
+
+if [ ! -f "$WINEPREFIX/system.reg" ]; then
+    (
+        flock 8
+        # Another instance may have finished the setup while we waited.
+        [ -f "$WINEPREFIX/system.reg" ] || init_prefix
+    ) 8> "${XDG_RUNTIME_DIR:-/tmp}/luxenos-wine-init.lock"
+    if [ ! -f "$WINEPREFIX/system.reg" ]; then
+        {
+            printf 'The Windows environment could not be created in %s.\n\n' "$WINEPREFIX"
+            tail -n 40 "$LOGFILE" 2>/dev/null
+        } > "$WORK/failure.txt"
+        Z --text-info --title "$TITLE" --filename="$WORK/failure.txt" --width 720 --height 380
+        exit 1
+    fi
+fi
+
+# --- optional confirmation ------------------------------------------------------
+
+if [ "$LUXENOS_WINE_CONFIRM" = yes ]; then
+    if ! Z --question --title "$TITLE" --no-markup --width 500 \
+        --ok-label "Run" --cancel-label "Cancel" \
+        --text "Run this Windows program?${nl}${nl}${base}${nl}${dir}${nl}${nl}Windows programs are not sandboxed: they can read and change all of your files. Only run programs you trust."; then
+        exit 0
+    fi
+fi
+
+# --- installer hint -------------------------------------------------------------
+
+case $lower in
+    *setup*|*install*|*inst.exe|*.msi)
+        if command -v notify-send >/dev/null 2>&1; then
+            notify-send -a "Windows Program (Wine)" "Starting installer" \
+                "Follow the installer window. Installed programs will appear in the application launcher." >/dev/null 2>&1
+        fi
+        ;;
+esac
+
+# --- run it ---------------------------------------------------------------------
+
+: > "$LOGFILE" 2>/dev/null
+start=$(date +%s)
+cd "$dir" 2>/dev/null || cd "$HOME" || exit 1
+export WINEDEBUG="${WINEDEBUG:-err+all,fixme-all}"
+
+if [ "$is_msi" = yes ]; then
+    wine msiexec /i "$abs" >> "$LOGFILE" 2>&1
+else
+    wine "$abs" >> "$LOGFILE" 2>&1
+fi
+rc=$?
+elapsed=$(( $(date +%s) - start ))
+
+if [ "$rc" -ne 0 ] && [ "$LUXENOS_WINE_QUICKFAIL_SECS" -gt 0 ] && [ "$elapsed" -le "$LUXENOS_WINE_QUICKFAIL_SECS" ]; then
+    hint="The program closed right after starting (exit code $rc)."
+    if grep -qiE 'bad exe format|could not load kernel32|not a valid win32' "$LOGFILE" 2>/dev/null; then
+        hint="Wine could not run this file. It is either damaged or not compatible with Wine (exit code $rc)."
+    elif grep -qi 'wine32\|32-bit' "$LOGFILE" 2>/dev/null; then
+        hint="Wine reports a problem with 32-bit support (exit code $rc)."
+    fi
+    if out=$(Z --question --title "$TITLE" --no-markup --width 500 \
+        --ok-label "Close" --cancel-label "Close" --extra-button "Show log" \
+        --text "${hint}${nl}${nl}${base}${nl}${nl}Not every Windows program works with Wine."); then
+        :
+    fi
+    if [ "$out" = "Show log" ]; then
+        Z --text-info --title "$TITLE - log" --filename="$LOGFILE" --width 760 --height 460
+    fi
+fi
+exit 0

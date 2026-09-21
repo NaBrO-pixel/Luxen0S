@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Install Debian Package
+Comment=Install a .deb package with a graphical confirmation
+Exec=luxenos-deb-install %f
+Icon=system-software-install
+Terminal=false
+StartupNotify=true
+Categories=System;
+Keywords=deb;install;package;software;
+MimeType=application/vnd.debian.binary-package;application/x-deb;application/x-debian-package;

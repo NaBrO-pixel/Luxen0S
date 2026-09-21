@@ -1,0 +1,15 @@
+[Unit]
+Description=LuxenOS Automatic System Updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/luxenos-updater --auto
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=luxenos-updater
+User=root
+
+# Timeout after 2 hours (updates can take a while on slow connections)
+TimeoutStartSec=7200

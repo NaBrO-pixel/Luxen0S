@@ -1,0 +1,9 @@
+#!/bin/sh
+# Lock the screen in the current glass palette (falls back to the default
+# colour if luxenos-glass is unavailable). Extra arguments go to swaylock.
+color=$(timeout 3 luxenos-glass get base 2>/dev/null)
+case $color in
+    [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+    *) color=141a26 ;;
+esac
+exec swaylock -f -c "$color" "$@"

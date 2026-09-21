@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Android Setup
+Comment=Set up Play Store and Aurora Store in Waydroid
+Exec=foot -e luxenos-setup-android
+Icon=android
+Type=Application
+Categories=System;

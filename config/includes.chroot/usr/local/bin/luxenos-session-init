@@ -1,0 +1,72 @@
+#!/bin/sh
+# luxenos-session-init - one-time desktop bring-up, run from the Sway config
+# (exec, not exec_always) right after login. Every step is optional and
+# independent: a missing program or a failure is logged and skipped, it never
+# blocks the desktop.
+#
+#   1. make the Wayland environment visible to D-Bus / systemd --user
+#   2. generate the glass theme files (so dunst starts themed)
+#   3. polkit agent (graphical password prompts: .deb installs, ...)
+#   4. dunst (notifications)
+#   5. nm-applet (Wi-Fi/Ethernet tray icon and password prompts), once, and only
+#      if NetworkManager is actually running
+#   6. ~/Pictures for screenshots
+
+uid=$(id -u)
+
+log() {
+    if command -v logger >/dev/null 2>&1; then logger -t luxenos-session -- "$*"; fi
+}
+running() { pgrep -U "$uid" -x "$1" >/dev/null 2>&1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# start_once PROGRAM [ARGS...]
+start_once() {
+    prog=$1
+    if ! have "$prog"; then log "$prog not installed; skipped"; return 1; fi
+    if running "$prog"; then return 0; fi
+    (setsid "$@" >/dev/null 2>&1 &)
+}
+
+# 1. Environment for D-Bus-activated services and portals. Debian's
+#    /etc/sway/config.d/50-systemd-user.conf normally does this; only act if
+#    that did not happen.
+if have dbus-update-activation-environment; then
+    if ! { have systemctl && systemctl --user show-environment 2>/dev/null | grep -q '^WAYLAND_DISPLAY='; }; then
+        dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY SWAYSOCK \
+            XDG_CURRENT_DESKTOP XDG_SESSION_TYPE >/dev/null 2>&1 \
+            || log "could not export session environment"
+    fi
+fi
+
+# 2. Theme files before the first notification / launcher.
+if have luxenos-glass; then
+    luxenos-glass apply --files-only >/dev/null 2>&1 || log "luxenos-glass apply failed"
+fi
+
+# 3. Polkit agent (script has its own duplicate guard).
+if have luxenos-polkit-agent; then
+    (setsid luxenos-polkit-agent >/dev/null 2>&1 &)
+fi
+
+# 4. Notifications.
+start_once dunst
+
+# 5. Network tray applet: exactly one, only with NetworkManager running.
+if have nm-applet; then
+    nm_up=no
+    if have systemctl && systemctl is-active --quiet NetworkManager 2>/dev/null; then nm_up=yes; fi
+    if have nmcli && nmcli -t -f RUNNING general 2>/dev/null | grep -q '^running'; then nm_up=yes; fi
+    if [ "$nm_up" = yes ]; then
+        start_once nm-applet --indicator
+    else
+        log "NetworkManager is not running; nm-applet not started"
+    fi
+else
+    log "nm-applet not installed; use luxenos-network"
+fi
+
+# 6. Screenshot folder.
+mkdir -p "$HOME/Pictures" 2>/dev/null
+
+exit 0

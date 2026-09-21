@@ -1,0 +1,12 @@
+# LuxenOS system-wide default applications (users can override in
+# ~/.config/mimeapps.list). Double-click routing for Debian packages and
+# Windows programs goes through LuxenOS's graphical helpers.
+[Default Applications]
+application/vnd.debian.binary-package=luxenos-deb-install.desktop
+application/x-deb=luxenos-deb-install.desktop
+application/x-debian-package=luxenos-deb-install.desktop
+application/vnd.microsoft.portable-executable=luxenos-wine-open.desktop
+application/x-msdownload=luxenos-wine-open.desktop
+application/x-ms-dos-executable=luxenos-wine-open.desktop
+application/x-dosexec=luxenos-wine-open.desktop
+application/x-msi=luxenos-wine-open.desktop

@@ -1,9 +1,13 @@
-# LuxenOS Installer Edition — kiosk session.
-# This file only exists in the *live* boot session used to run the
-# installer. It is deliberately deleted from the target system as the last
-# Calamares job (see config/includes.chroot/etc/calamares/modules/
-# luxenos-cleanup.conf), so an installed LuxenOS boots to the normal
-# full desktop defined in etc/skel/.config/sway/config, not this kiosk.
+# LuxenOS Installer Edition - kiosk session.
+# Used only by the live USB session: /etc/profile.d/luxenos-session.sh starts
+# `sway -c` with this file when the kernel command line has boot=live.
+# It is removed from the installed system by the Calamares shellprocess job
+# (etc/calamares/modules/shellprocess-luxenos-cleanup.conf), and an installed
+# system never has boot=live anyway, so it boots the normal desktop from
+# etc/skel/.config/sway/config.
+#
+# To try the full desktop from the live USB instead, add
+# luxenos.session=desktop to the kernel command line.
 
 set $mod Mod4
 font pango:Noto Sans 10

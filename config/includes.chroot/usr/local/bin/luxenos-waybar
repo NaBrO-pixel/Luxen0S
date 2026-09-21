@@ -1,0 +1,8 @@
+#!/bin/sh
+# Start Waybar with a freshly generated glass theme. Sway launches this as
+# `swaybar_command` and appends its own arguments (-b <bar-id>), which are
+# passed straight through to Waybar.
+if command -v luxenos-glass >/dev/null 2>&1; then
+    luxenos-glass apply --files-only >/dev/null 2>&1 || true
+fi
+exec waybar "$@"

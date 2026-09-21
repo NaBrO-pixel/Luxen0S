@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Windows Program (Wine)
+Comment=Run a Windows .exe or .msi installer with Wine
+Exec=luxenos-wine-open %f
+Icon=application-x-executable
+Terminal=false
+StartupNotify=false
+Categories=Utility;
+Keywords=windows;exe;msi;wine;
+MimeType=application/vnd.microsoft.portable-executable;application/x-msdownload;application/x-ms-dos-executable;application/x-dosexec;application/x-msi;

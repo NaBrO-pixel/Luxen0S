@@ -1,0 +1,931 @@
+#!/bin/sh
+# luxenos-glass - central "liquid glass" appearance generator for LuxenOS.
+#
+# One set of values (see /etc/luxenos/glass.conf) drives every themed piece:
+#
+#   ~/.config/luxenos/glass/waybar.css|waybar.json   bar look + geometry
+#   ~/.config/luxenos/glass/wofi.css                 launcher/menus; copied to
+#                                                    ~/.config/wofi/style.css
+#   ~/.config/luxenos/glass/gtk3.css|gtk4.css        GTK accents and radii
+#   ~/.config/dunst/dunstrc                          notifications
+#   ~/.config/gtk-3.0|gtk-4.0/settings.ini           dark/light + animations
+#   live compositor settings over the Sway IPC       gaps, borders, and - only
+#                                                    on SwayFX - blur, rounded
+#                                                    corners, shadows, layer
+#                                                    effects
+#
+# Files this script does not own (no "luxenos-glass: managed" marker, e.g. after
+# you hand-edited them or used nwg-look) are never overwritten.
+#
+# Robustness rules:
+#   * config is parsed, never sourced; invalid values fall back to defaults
+#   * SwayFX is detected by asking the running compositor (it accepts SwayFX-only
+#     commands), not by checking which package is installed
+#   * every compositor command is independent: an unsupported effect is
+#     skipped (see --debug) and everything else is still applied
+#   * no "set -e": optional features can never abort the desktop setup
+#
+# Usage:
+#   luxenos-glass apply [--files-only|--sway-only]
+#   luxenos-glass preset performance|balanced|rich|flat
+#   luxenos-glass theme dark|light
+#   luxenos-glass set GLASS_KEY VALUE
+#   luxenos-glass get NAME         (base, text, accent, opacity, ... see status)
+#   luxenos-glass status           what is active and why
+#   luxenos-glass namespaces       layer-shell namespaces used for SwayFX effects
+#   luxenos-glass reset            drop your overrides
+#
+# Add --debug (or LUXENOS_GLASS_DEBUG=1) to see why anything was skipped.
+
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}"
+SYS_CONF="${LUXENOS_GLASS_SYS_CONF:-/etc/luxenos/glass.conf}"
+USER_CONF="$CFG/luxenos/glass.conf"
+OUT="$CFG/luxenos/glass"
+MARK="luxenos-glass: managed"
+DEBUG="${LUXENOS_GLASS_DEBUG:-0}"
+CUR_TMP=""
+WRITE_FAILS=0
+
+# ------------------------------------------------------------ diagnostics ---
+
+warn() { printf 'luxenos-glass: %s\n' "$*" >&2; }
+debug() { if [ "$DEBUG" != 0 ]; then printf 'luxenos-glass[debug]: %s\n' "$*" >&2; fi; }
+die() { warn "$*"; exit 1; }
+
+# shellcheck disable=SC2317  # invoked via trap
+cleanup() { if [ -n "$CUR_TMP" ]; then rm -f "$CUR_TMP"; fi; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# install_file DEST : atomically replace DEST with stdin. Never leaves a
+# half-written file behind; failure is reported but not fatal.
+install_file() {
+    dest=$1
+    dir=$(dirname -- "$dest")
+    if ! mkdir -p -- "$dir" 2>/dev/null; then
+        warn "cannot create $dir"; WRITE_FAILS=$((WRITE_FAILS + 1)); cat >/dev/null; return 1
+    fi
+    CUR_TMP=$(mktemp "$dest.XXXXXX" 2>/dev/null) || {
+        warn "cannot write in $dir"; CUR_TMP=""; WRITE_FAILS=$((WRITE_FAILS + 1)); cat >/dev/null; return 1
+    }
+    if cat > "$CUR_TMP" && chmod 644 "$CUR_TMP" && mv -f -- "$CUR_TMP" "$dest"; then
+        CUR_TMP=""
+        return 0
+    fi
+    warn "could not write $dest"
+    rm -f "$CUR_TMP"
+    CUR_TMP=""
+    WRITE_FAILS=$((WRITE_FAILS + 1))
+    return 1
+}
+
+# is_ours FILE : true if FILE is missing or still carries our marker.
+is_ours() { [ ! -e "$1" ] || grep -q "$MARK" "$1" 2>/dev/null; }
+
+# ---------------------------------------------------------------- config ----
+
+# Whitelist parser: only GLASS_* keys, only harmless characters. The file is
+# never sourced, so a typo or hostile value cannot run code.
+load_conf() {
+    [ -r "$1" ] || { debug "no readable config at $1"; return 0; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        case $line in ''|'#'*) continue ;; esac
+        case $line in *=*) ;; *) continue ;; esac
+        key=${line%%=*}
+        val=${line#*=}
+        case $key in GLASS_*) ;; *) continue ;; esac
+        case $key in *[!A-Z0-9_]*) continue ;; esac
+        val=${val#\"}
+        val=${val%\"}
+        case $val in
+            *[!A-Za-z0-9#._\ -]*) warn "$1: ignoring $key (unsupported characters)"; continue ;;
+        esac
+        eval "$key=\$val"
+    done < "$1"
+}
+
+# enum VAR DEFAULT allowed... : reset VAR to DEFAULT unless it is allowed.
+enum() {
+    _n=$1; _d=$2; shift 2
+    eval "_v=\${$_n:-}"
+    for _a in "$@"; do
+        if [ "$_v" = "$_a" ]; then return 0; fi
+    done
+    if [ -n "$_v" ]; then warn "invalid $_n='$_v' (allowed: $*); using '$_d'"; fi
+    eval "$_n=\$_d"
+}
+
+# num VAR MIN MAX DEFAULT : integer in [MIN, MAX].
+num() {
+    eval "_v=\${$1:-}"
+    case $_v in
+        ''|*[!0-9]*)
+            if [ -n "$_v" ]; then warn "invalid $1='$_v' (need a whole number); using $4"; fi
+            _v=$4 ;;
+    esac
+    if [ "$_v" -lt "$2" ]; then debug "$1=$_v below $2; using $2"; _v=$2; fi
+    if [ "$_v" -gt "$3" ]; then debug "$1=$_v above $3; using $3"; _v=$3; fi
+    eval "$1=\$_v"
+}
+
+# hexcolor VAR DEFAULT : #RRGGBB
+hexcolor() {
+    eval "_v=\${$1:-}"
+    case $_v in
+        '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+        *)
+            if [ -n "$_v" ]; then warn "invalid $1='$_v' (need #RRGGBB); using $2"; fi
+            _v=$2 ;;
+    esac
+    eval "$1=\$_v"
+}
+
+preset_values() {
+    case $1 in
+        performance)
+            P_BLUR=no P_OPACITY=88 P_BORDER_OPACITY=18 P_SHADOW=0 P_RADIUS=8
+            P_BLUR_RADIUS=0 P_BLUR_PASSES=1 P_SATURATION=100 P_BLUR_NOISE=0
+            P_BLUR_BRIGHTNESS=100 P_BLUR_CONTRAST=100 P_ANIM_MS=0 P_GAPS=4 P_DIM=0 ;;
+        rich)
+            P_BLUR=yes P_OPACITY=55 P_BORDER_OPACITY=32 P_SHADOW=60 P_RADIUS=16
+            P_BLUR_RADIUS=8 P_BLUR_PASSES=3 P_SATURATION=135 P_BLUR_NOISE=3
+            P_BLUR_BRIGHTNESS=105 P_BLUR_CONTRAST=112 P_ANIM_MS=200 P_GAPS=8 P_DIM=6 ;;
+        *)
+            P_BLUR=yes P_OPACITY=68 P_BORDER_OPACITY=26 P_SHADOW=35 P_RADIUS=12
+            P_BLUR_RADIUS=5 P_BLUR_PASSES=2 P_SATURATION=115 P_BLUR_NOISE=2
+            P_BLUR_BRIGHTNESS=95 P_BLUR_CONTRAST=95 P_ANIM_MS=120 P_GAPS=6 P_DIM=0 ;;
+    esac
+}
+
+# --------------------------------------------------------------- colours ----
+
+rgb() {   # #rrggbb -> R,G,B
+    _h=${1#'#'}; _r=${_h%????}; _b=${_h#????}; _g=${_h#??}; _g=${_g%??}
+    printf '%d,%d,%d' "0x$_r" "0x$_g" "0x$_b"
+}
+alpha() { if [ "$1" -ge 100 ]; then printf '1.00'; else printf '0.%02d' "$1"; fi; }
+rgba() { printf 'rgba(%s,%s)' "$(rgb "$1")" "$(alpha "$2")"; }
+hex8() { printf '%s%02x' "$1" $(( $2 * 255 / 100 )); }
+pct_float() { printf '%d.%02d' $(( $1 / 100 )) $(( $1 % 100 )); }
+min2() { if [ "$1" -lt "$2" ]; then echo "$1"; else echo "$2"; fi; }
+
+# min_opacity BASE TEXT BACKDROP REQUESTED MINCONTRAST_X100
+# Lowest opacity >= REQUESTED (percent) at which TEXT stays at least
+# MINCONTRAST:1 against BASE composited over the worst-case BACKDROP grey
+# (0 or 255). This is what keeps text readable whatever is behind the glass.
+min_opacity() {
+    awk -v base="$(rgb "$1")" -v text="$(rgb "$2")" -v bd="$3" -v req="$4" -v minc="$5" '
+    function lin(c) { c = c / 255; return (c <= 0.03928) ? c / 12.92 : ((c + 0.055) / 1.055) ^ 2.4 }
+    function lum(r, g, b) { return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b) }
+    BEGIN {
+        split(base, B, ","); split(text, T, ",")
+        lt = lum(T[1], T[2], T[3])
+        for (a = req; a <= 100; a++) {
+            f = a / 100
+            lb = lum(f * B[1] + (1 - f) * bd, f * B[2] + (1 - f) * bd, f * B[3] + (1 - f) * bd)
+            hi = (lt > lb) ? lt : lb; lo = (lt > lb) ? lb : lt
+            if ((hi + 0.05) / (lo + 0.05) * 100 >= minc) { print a; exit }
+        }
+        print 100
+    }' 2>/dev/null
+}
+
+# ------------------------------------------------------------- resolution ---
+
+resolve_config() {
+    load_conf "$SYS_CONF"
+    load_conf "$USER_CONF"
+
+    : "${GLASS_ENABLE:=yes}" "${GLASS_THEME:=dark}" "${GLASS_PRESET:=balanced}"
+    : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}"
+    : "${GLASS_ACCENT:=#7aa2ff}" "${GLASS_FONT:=Inter}" "${GLASS_FONT_SIZE:=13}"
+    : "${GLASS_FALLBACK_OPACITY:=82}" "${GLASS_MIN_CONTRAST:=3.0}"
+
+    enum GLASS_ENABLE yes yes no
+    enum GLASS_THEME dark dark light
+    enum GLASS_EFFECTS auto auto off
+    enum GLASS_REDUCE_MOTION no yes no
+    enum GLASS_PRESET balanced performance balanced rich
+    hexcolor GLASS_ACCENT '#7aa2ff'
+    if [ -z "$GLASS_FONT" ]; then GLASS_FONT=Inter; fi
+
+    preset_values "$GLASS_PRESET"
+    : "${GLASS_BLUR:=$P_BLUR}" "${GLASS_OPACITY:=$P_OPACITY}"
+    : "${GLASS_BORDER_OPACITY:=$P_BORDER_OPACITY}" "${GLASS_SHADOW:=$P_SHADOW}"
+    : "${GLASS_RADIUS:=$P_RADIUS}" "${GLASS_BLUR_RADIUS:=$P_BLUR_RADIUS}"
+    : "${GLASS_BLUR_PASSES:=$P_BLUR_PASSES}" "${GLASS_SATURATION:=$P_SATURATION}"
+    : "${GLASS_BLUR_NOISE:=$P_BLUR_NOISE}" "${GLASS_BLUR_BRIGHTNESS:=$P_BLUR_BRIGHTNESS}"
+    : "${GLASS_BLUR_CONTRAST:=$P_BLUR_CONTRAST}" "${GLASS_ANIM_MS:=$P_ANIM_MS}"
+    : "${GLASS_GAPS:=$P_GAPS}" "${GLASS_DIM_INACTIVE:=$P_DIM}" "${GLASS_BORDER_WIDTH:=1}"
+
+    enum GLASS_BLUR yes yes no
+    num GLASS_OPACITY 0 100 68
+    num GLASS_BORDER_OPACITY 0 100 26
+    num GLASS_SHADOW 0 100 35
+    num GLASS_RADIUS 0 40 12
+    num GLASS_BLUR_RADIUS 0 10 5
+    num GLASS_BLUR_PASSES 1 6 2
+    num GLASS_SATURATION 0 200 115
+    num GLASS_BLUR_NOISE 0 30 2
+    num GLASS_BLUR_BRIGHTNESS 0 200 95
+    num GLASS_BLUR_CONTRAST 0 200 95
+    num GLASS_ANIM_MS 0 2000 120
+    num GLASS_GAPS 0 32 6
+    num GLASS_DIM_INACTIVE 0 50 0
+    num GLASS_BORDER_WIDTH 0 6 1
+    num GLASS_FONT_SIZE 8 24 13
+    num GLASS_FALLBACK_OPACITY 0 100 82
+
+    # MIN_CONTRAST may be decimal (e.g. 4.5); keep it as hundredths.
+    case $GLASS_MIN_CONTRAST in
+        ''|*[!0-9.]*|*.*.*) warn "invalid GLASS_MIN_CONTRAST='$GLASS_MIN_CONTRAST'; using 3.0"; GLASS_MIN_CONTRAST=3.0 ;;
+    esac
+    MINC=$(awk -v v="$GLASS_MIN_CONTRAST" 'BEGIN { v += 0; if (v < 1) v = 1; if (v > 21) v = 21; printf "%d", v * 100 }' 2>/dev/null)
+    case $MINC in ''|*[!0-9]*) MINC=300 ;; esac
+
+    if [ "$GLASS_REDUCE_MOTION" = yes ]; then GLASS_ANIM_MS=0; fi
+
+    # Palette.
+    if [ "$GLASS_THEME" = light ]; then
+        BASE='#f4f7fc' TEXT='#18202f' DIM='#586377' BACKDROP=0
+        BORDER_HEX='#18202f' BOP=$(( GLASS_BORDER_OPACITY * 6 / 10 ))
+        HI_PCT=55 WARN='#a8730a' CRIT='#c8362d'
+    else
+        BASE='#141a26' TEXT='#e8edf7' DIM='#94a0b8' BACKDROP=255
+        BORDER_HEX='#ffffff' BOP=$GLASS_BORDER_OPACITY
+        HI_PCT=9 WARN='#f0c05a' CRIT='#ff6b62'
+    fi
+}
+
+# Runs after the compositor has been probed (needs FX).
+resolve_effective() {
+    FX=no
+    if [ "$FX_CAPABLE" = yes ] && [ "$GLASS_ENABLE" = yes ] && [ "$GLASS_EFFECTS" = auto ]; then
+        FX=yes
+    fi
+    BLUR_ON=no
+    if [ "$FX" = yes ] && [ "$GLASS_BLUR" = yes ] && [ "$GLASS_BLUR_RADIUS" -gt 0 ]; then BLUR_ON=yes; fi
+
+    OPA=$GLASS_OPACITY
+    if [ "$GLASS_ENABLE" = no ]; then
+        OPA=100; GLASS_SHADOW=0; GLASS_ANIM_MS=0; SHEEN=0
+    else
+        SHEEN=1
+        # Without real blur the backdrop is not softened: panels get an
+        # opacity floor so they stay legible.
+        if [ "$BLUR_ON" = no ] && [ "$OPA" -lt "$GLASS_FALLBACK_OPACITY" ]; then
+            debug "no blur: raising opacity $OPA -> $GLASS_FALLBACK_OPACITY"
+            OPA=$GLASS_FALLBACK_OPACITY
+        fi
+        # Readability guarantee, independent of preset and blur.
+        want=$(min_opacity "$BASE" "$TEXT" "$BACKDROP" "$OPA" "$MINC")
+        case $want in ''|*[!0-9]*) want=$OPA ;; esac
+        if [ "$want" -gt "$OPA" ]; then
+            debug "contrast: raising opacity $OPA -> $want to keep text readable (min ${GLASS_MIN_CONTRAST}:1)"
+            OPA=$want
+        fi
+    fi
+    OPA_STRONG=$(min2 100 $(( OPA + 18 )))
+    if [ "$GLASS_ENABLE" = no ]; then OPA_STRONG=100; fi
+    SHADOW_A=$(( GLASS_SHADOW * 5 / 10 ))
+    R=$GLASS_RADIUS
+    R_IN=$(( R > 4 ? R - 4 : 0 ))
+    BAR_H=$(( GLASS_FONT_SIZE * 2 + 8 ))
+}
+
+# --------------------------------------------- compositor detection (IPC) ---
+
+# Sets COMP (swayfx|sway|none), COMP_HOW, FX_CAPABLE (yes|no).
+# The compositor that is actually running is asked: SwayFX accepts the
+# SwayFX-only command "blur_radius", stock Sway answers "Unknown/invalid
+# command". get_version cannot be used: SwayFX also reports variant "sway".
+detect_compositor() {
+    COMP=none
+    COMP_HOW="no Sway IPC available"
+    FX_CAPABLE=no
+    if have swaymsg && [ -n "${SWAYSOCK:-}" ] && swaymsg -t get_version >/dev/null 2>&1; then
+        COMP=sway
+        COMP_HOW="running compositor rejected SwayFX-only command 'blur_radius'"
+        if swaymsg "blur_radius $GLASS_BLUR_RADIUS" >/dev/null 2>&1; then
+            COMP=swayfx
+            FX_CAPABLE=yes
+            COMP_HOW="running compositor accepted SwayFX-only command 'blur_radius'"
+        fi
+    elif have sway && sway --version 2>/dev/null | grep -qi swayfx; then
+        COMP=swayfx
+        FX_CAPABLE=yes
+        COMP_HOW="'sway --version' reports SwayFX (compositor not running or IPC unreachable)"
+    fi
+    debug "compositor: $COMP ($COMP_HOW)"
+}
+
+# ------------------------------------------------------ layer namespaces ----
+#
+# wlr-layer-shell namespaces are chosen by each client and are NOT exposed by
+# Sway/SwayFX IPC, so they cannot be listed at runtime. Values below were
+# recorded from the real clients (WAYLAND_DEBUG=client): waybar "waybar",
+# wofi "wofi", dunst "notifications". Only components that are installed get
+# effects; GLASS_NS_BAR / GLASS_NS_LAUNCHER / GLASS_NS_NOTIFY override the
+# namespace list if a component uses another one.
+
+ns_bar() {
+    _l=${GLASS_NS_BAR:-}
+    if [ -z "$_l" ] && have waybar; then _l=waybar; fi
+    printf '%s' "$_l"
+}
+ns_launcher() {
+    _l=${GLASS_NS_LAUNCHER:-}
+    if [ -z "$_l" ]; then
+        if have wofi; then _l="wofi"; fi
+        if have fuzzel || have tofi; then _l="$_l launcher"; fi
+        if have rofi; then _l="$_l rofi"; fi
+    fi
+    printf '%s' "$_l"
+}
+ns_notify() {
+    _l=${GLASS_NS_NOTIFY:-}
+    if [ -z "$_l" ]; then
+        if have dunst || have mako; then _l="notifications"; fi
+        if have swaync; then _l="$_l swaync-notification-window swaync-control-center"; fi
+    fi
+    printf '%s' "$_l"
+}
+
+# ---------------------------------------------------------------- writers ---
+
+palette_css() {
+    cat <<CSS
+@define-color glass_bg $(rgba "$BASE" "$OPA");
+@define-color glass_bg_strong $(rgba "$BASE" "$OPA_STRONG");
+@define-color glass_border $(rgba "$BORDER_HEX" "$BOP");
+@define-color glass_hi $(rgba '#ffffff' "$HI_PCT");
+@define-color glass_fg $TEXT;
+@define-color glass_fg_dim $DIM;
+@define-color glass_accent $GLASS_ACCENT;
+@define-color glass_accent_soft $(rgba "$GLASS_ACCENT" 30);
+@define-color glass_warn $WARN;
+@define-color glass_crit $CRIT;
+CSS
+}
+
+transition_css() {
+    if [ "$GLASS_ANIM_MS" -gt 0 ]; then
+        printf 'transition: background-color %dms ease-in-out, color %dms ease-in-out, border-color %dms ease-in-out;' \
+            "$GLASS_ANIM_MS" "$GLASS_ANIM_MS" "$GLASS_ANIM_MS"
+    else
+        printf 'transition: none;'
+    fi
+}
+sheen_css() {
+    if [ "$SHEEN" -eq 1 ]; then
+        printf 'background-image: linear-gradient(to bottom, @glass_hi, rgba(255,255,255,0) 65%%);'
+    else
+        printf 'background-image: none;'
+    fi
+}
+shadow_css() {
+    if [ "$SHEEN" -eq 1 ]; then
+        printf 'box-shadow: inset 0 1px 0 @glass_hi, 0 2px 8px rgba(0,0,0,%s);' "$(alpha "$SHADOW_A")"
+    else
+        printf 'box-shadow: none;'
+    fi
+}
+
+write_waybar() {
+    install_file "$OUT/waybar.css" <<CSS
+/* $MARK by luxenos-glass; edit /etc/luxenos/glass.conf instead. */
+$(palette_css)
+
+* {
+    font-family: "$GLASS_FONT", "Noto Sans", "Font Awesome 6 Free", sans-serif;
+    font-size: ${GLASS_FONT_SIZE}px;
+    min-height: 0;
+    $(transition_css)
+}
+
+window#waybar {
+    background: transparent;
+    color: @glass_fg;
+}
+
+#workspaces,
+#mode,
+#clock,
+#battery,
+#network,
+#pulseaudio,
+#tray,
+#custom-power-profile,
+#custom-controls {
+    margin: 4px 3px;
+    padding: 0 12px;
+    color: @glass_fg;
+    background-color: @glass_bg;
+    $(sheen_css)
+    border: 1px solid @glass_border;
+    border-radius: ${R}px;
+    $(shadow_css)
+}
+
+#workspaces { padding: 0 4px; }
+
+#workspaces button {
+    padding: 0 9px;
+    margin: 3px 1px;
+    color: @glass_fg_dim;
+    background: transparent;
+    border: none;
+    border-radius: ${R_IN}px;
+    box-shadow: none;
+    text-shadow: none;
+}
+#workspaces button:hover { color: @glass_fg; background: @glass_accent_soft; }
+#workspaces button.focused,
+#workspaces button.active {
+    color: @glass_fg;
+    background: @glass_accent_soft;
+    box-shadow: inset 0 0 0 1px @glass_accent;
+}
+#workspaces button.urgent { color: @glass_crit; }
+
+#custom-controls { color: @glass_accent; }
+#custom-controls:hover,
+#custom-power-profile:hover,
+#pulseaudio:hover,
+#network:hover { background-color: @glass_bg_strong; }
+
+#battery.warning { color: @glass_warn; }
+#battery.critical,
+#network.disconnected,
+#pulseaudio.muted { color: @glass_crit; }
+
+tooltip {
+    background-color: @glass_bg_strong;
+    border: 1px solid @glass_border;
+    border-radius: ${R}px;
+}
+tooltip label { color: @glass_fg; padding: 2px 4px; }
+CSS
+    install_file "$OUT/waybar.json" <<JSON
+{
+    "layer": "top",
+    "position": "top",
+    "height": $BAR_H,
+    "margin": "$GLASS_GAPS $(( GLASS_GAPS + 2 )) 0 $(( GLASS_GAPS + 2 ))"
+}
+JSON
+}
+
+write_wofi() {
+    install_file "$OUT/wofi.css" <<CSS
+/* $MARK by luxenos-glass; edit /etc/luxenos/glass.conf instead. */
+$(palette_css)
+
+* {
+    font-family: "$GLASS_FONT", "Noto Sans", sans-serif;
+    font-size: $(( GLASS_FONT_SIZE + 1 ))px;
+    $(transition_css)
+}
+
+window { background: transparent; color: @glass_fg; }
+
+#outer-box {
+    margin: 0;
+    padding: 10px;
+    background-color: @glass_bg;
+    $(sheen_css)
+    border: 1px solid @glass_border;
+    border-radius: ${R}px;
+}
+
+#input {
+    margin: 2px 2px 8px 2px;
+    padding: 8px 12px;
+    color: @glass_fg;
+    background-color: @glass_bg_strong;
+    background-image: none;
+    border: 1px solid @glass_border;
+    border-radius: ${R_IN}px;
+    box-shadow: inset 0 1px 0 @glass_hi;
+}
+#input:focus { border-color: @glass_accent; }
+
+#scroll { margin: 0; }
+#inner-box { margin: 0; }
+
+#entry { padding: 6px 10px; border-radius: ${R_IN}px; color: @glass_fg; }
+#entry:selected {
+    background-color: @glass_accent_soft;
+    box-shadow: inset 0 0 0 1px @glass_accent;
+}
+#text { margin: 0 6px; color: inherit; }
+#img { margin-right: 6px; }
+CSS
+    # Wofi loads CSS from memory, so an @import cannot resolve relative paths;
+    # keep ~/.config/wofi/style.css in sync unless the user took it over.
+    ws="$CFG/wofi/style.css"
+    if is_ours "$ws" && [ -s "$OUT/wofi.css" ]; then
+        install_file "$ws" < "$OUT/wofi.css"
+    else
+        debug "leaving user-owned $ws alone"
+    fi
+}
+
+write_gtk() {
+    install_file "$OUT/gtk3.css" <<CSS
+/* $MARK by luxenos-glass. Accents and radii only: application windows stay
+   opaque so ordinary programs are never made hard to read. */
+@define-color theme_selected_bg_color $GLASS_ACCENT;
+@define-color theme_selected_fg_color #ffffff;
+@define-color accent_color $GLASS_ACCENT;
+@define-color accent_bg_color $GLASS_ACCENT;
+
+button, entry, spinbutton, combobox, notebook > header > tabs > tab { border-radius: ${R_IN}px; }
+menu, .popup, popover.background, popover.background > contents { border-radius: ${R_IN}px; }
+tooltip.background { border-radius: ${R_IN}px; }
+headerbar, .titlebar {
+    border-top-left-radius: ${R}px;
+    border-top-right-radius: ${R}px;
+}
+CSS
+    install_file "$OUT/gtk4.css" <<CSS
+/* $MARK by luxenos-glass. */
+@define-color accent_bg_color $GLASS_ACCENT;
+@define-color accent_color $GLASS_ACCENT;
+@define-color accent_fg_color #ffffff;
+CSS
+    # Stubs so a fresh user picks the generated files up.
+    for v in 3 4; do
+        stub="$CFG/gtk-$v.0/gtk.css"
+        if [ ! -e "$stub" ]; then
+            install_file "$stub" <<CSS
+/* GTK$v apps: accent/radii from the LuxenOS glass theme. Add your own rules below. */
+@import url("../luxenos/glass/gtk$v.css");
+CSS
+        fi
+    done
+    dark=1; anim=1
+    if [ "$GLASS_THEME" = light ]; then dark=0; fi
+    if [ "$GLASS_ANIM_MS" -eq 0 ]; then anim=0; fi
+    # GTK3 honours settings.ini. GTK4/libadwaita ignores the dark-theme key
+    # (dark/light comes from the color-scheme set in apply_gsettings), so its
+    # settings.ini only carries font and animation settings.
+    f="$CFG/gtk-3.0/settings.ini"
+    if is_ours "$f"; then
+        install_file "$f" <<INI
+[Settings]
+# $MARK by luxenos-glass. Use: luxenos-glass theme dark|light
+# (or edit this file / use nwg-look and luxenos-glass will leave it alone).
+gtk-theme-name=Adwaita
+gtk-application-prefer-dark-theme=$dark
+gtk-font-name=$GLASS_FONT 10
+gtk-enable-animations=$anim
+INI
+    else
+        debug "leaving user-owned $f alone"
+    fi
+    f="$CFG/gtk-4.0/settings.ini"
+    if is_ours "$f"; then
+        install_file "$f" <<INI
+[Settings]
+# $MARK by luxenos-glass. Dark/light for GTK4 comes from the desktop color-scheme.
+gtk-font-name=$GLASS_FONT 10
+gtk-enable-animations=$anim
+INI
+    else
+        debug "leaving user-owned $f alone"
+    fi
+}
+
+# Notifications: a small complete dunstrc (unlisted keys keep dunst's own
+# defaults). A full file rather than a dunstrc.d drop-in, because drop-ins only
+# exist in newer dunst releases.
+write_dunst() {
+    df="$CFG/dunst/dunstrc"
+    if ! is_ours "$df"; then debug "leaving user-owned $df alone"; return 0; fi
+    fr=$(hex8 "$BORDER_HEX" "$BOP")
+    bg=$(hex8 "$BASE" "$OPA")
+    install_file "$df" <<CONF
+# $MARK by luxenos-glass; edit /etc/luxenos/glass.conf instead.
+[global]
+    font = $GLASS_FONT $(( GLASS_FONT_SIZE - 2 ))
+    corner_radius = $R
+    frame_width = 1
+    gap_size = $(( GLASS_GAPS > 0 ? GLASS_GAPS : 4 ))
+    padding = 12
+    horizontal_padding = 14
+    highlight = "$GLASS_ACCENT"
+
+[urgency_low]
+    background = "$bg"
+    foreground = "$DIM"
+    frame_color = "$fr"
+
+[urgency_normal]
+    background = "$bg"
+    foreground = "$TEXT"
+    frame_color = "$fr"
+
+[urgency_critical]
+    background = "$bg"
+    foreground = "$TEXT"
+    frame_color = "$CRIT"
+CONF
+}
+
+apply_gsettings() {
+    have gsettings || { debug "gsettings not installed; skipping color-scheme/animation settings"; return 0; }
+    scheme=prefer-dark; anim=true
+    if [ "$GLASS_THEME" = light ]; then scheme=default; fi
+    if [ "$GLASS_ANIM_MS" -eq 0 ]; then anim=false; fi
+    timeout 3 gsettings set org.gnome.desktop.interface color-scheme "$scheme" >/dev/null 2>&1 \
+        || debug "could not set color-scheme (no dconf/session bus?)"
+    timeout 3 gsettings set org.gnome.desktop.interface enable-animations "$anim" >/dev/null 2>&1 \
+        || debug "could not set enable-animations"
+}
+
+# ------------------------------------------------------------ compositor ----
+
+OK_CMDS=0
+BAD_CMDS=0
+# sm COMMAND : run one compositor command; failure is logged, never fatal.
+sm() {
+    if _out=$(swaymsg "$1" 2>&1); then
+        OK_CMDS=$((OK_CMDS + 1))
+        return 0
+    fi
+    BAD_CMDS=$((BAD_CMDS + 1))
+    _out=$(printf '%s' "$_out" | tr '\n' ' ' | cut -c1-160)
+    debug "compositor refused '$1': $_out"
+    return 1
+}
+
+# layer_fx NAMESPACES KIND : KIND bar|panel
+layer_fx() {
+    for ns in $1; do
+        sm "layer_effects \"$ns\" \"reset\""
+        [ "$BLUR_ON" = yes ] || continue
+        sm "layer_effects \"$ns\" \"blur enable\""
+        sm "layer_effects \"$ns\" \"blur_ignore_transparent enable\""
+        if [ "$2" = panel ]; then
+            sm "layer_effects \"$ns\" \"corner_radius $R\""
+            if [ "$GLASS_SHADOW" -gt 0 ]; then sm "layer_effects \"$ns\" \"shadows enable\""; fi
+        fi
+    done
+}
+
+apply_sway() {
+    if [ "$COMP" = none ]; then debug "no Sway IPC: skipping compositor settings"; return 0; fi
+
+    if [ "$GLASS_BORDER_WIDTH" -eq 0 ]; then
+        sm "default_border none"; sm "default_floating_border none"
+    else
+        sm "default_border pixel $GLASS_BORDER_WIDTH"
+        sm "default_floating_border pixel $GLASS_BORDER_WIDTH"
+    fi
+    sm "gaps inner $GLASS_GAPS"
+    sm "gaps outer $(( GLASS_GAPS / 2 ))"
+
+    foc=$(hex8 "$GLASS_ACCENT" 85); unf=$(hex8 "$BORDER_HEX" "$BOP"); urg=$(hex8 "$CRIT" 90)
+    bg=$(hex8 "$BASE" "$OPA")
+    sm "client.focused $foc $bg $TEXT $foc $foc"
+    sm "client.focused_inactive $unf $bg $DIM $unf $unf"
+    sm "client.unfocused $unf $bg $DIM $unf $unf"
+    sm "client.urgent $urg $bg $TEXT $urg $urg"
+
+    if [ "$COMP" != swayfx ]; then
+        debug "stock Sway: blur, rounded windows and shadows unavailable; panels use tinted translucency"
+        return 0
+    fi
+
+    # SwayFX. Everything is set explicitly (also when turning effects OFF) so
+    # switching presets always changes the compositor state.
+    if [ "$FX" = yes ]; then
+        sm "corner_radius $R"
+        if [ "$BLUR_ON" = yes ]; then
+            sm "blur enable"
+            sm "blur_radius $GLASS_BLUR_RADIUS"
+            sm "blur_passes $GLASS_BLUR_PASSES"
+            sm "blur_saturation $(pct_float "$GLASS_SATURATION")"
+            sm "blur_noise $(pct_float "$GLASS_BLUR_NOISE")"
+            sm "blur_brightness $(pct_float "$GLASS_BLUR_BRIGHTNESS")"
+            sm "blur_contrast $(pct_float "$GLASS_BLUR_CONTRAST")"
+        else
+            sm "blur disable"
+        fi
+        if [ "$GLASS_SHADOW" -gt 0 ]; then
+            sm "shadows enable"
+            sm "shadow_blur_radius $(( 8 + GLASS_SHADOW * 22 / 100 ))"
+            sm "shadow_color $(hex8 '#000000' "$SHADOW_A")"
+            sm "shadow_offset 0 $(( 2 + GLASS_SHADOW * 6 / 100 ))"
+        else
+            sm "shadows disable"
+        fi
+        sm "default_dim_inactive $(pct_float "$GLASS_DIM_INACTIVE")"
+    else
+        # Effects switched off (GLASS_EFFECTS=off or flat theme): undo them.
+        sm "corner_radius 0"; sm "blur disable"; sm "shadows disable"
+        sm "default_dim_inactive 0.00"
+    fi
+
+    found=0
+    for kind in bar launcher notify; do
+        case $kind in
+            bar) nss=$(ns_bar); how=bar ;;
+            launcher) nss=$(ns_launcher); how=panel ;;
+            notify) nss=$(ns_notify); how=panel ;;
+        esac
+        if [ -z "$nss" ]; then
+            debug "no $kind component installed: no layer effects for it"
+            continue
+        fi
+        found=1
+        debug "layer effects for $kind: $nss"
+        if [ "$FX" = yes ]; then
+            layer_fx "$nss" "$how"
+        else
+            for ns in $nss; do sm "layer_effects \"$ns\" \"reset\""; done
+        fi
+    done
+    if [ "$found" -eq 0 ]; then debug "no layer-shell components found"; fi
+    debug "compositor commands: $OK_CMDS applied, $BAD_CMDS refused"
+}
+
+# ---------------------------------------------------------------- commands --
+
+prepare() {   # resolve everything once
+    resolve_config
+    detect_compositor
+    resolve_effective
+}
+
+cmd_apply() {
+    mode=${1:-}
+    prepare
+    case $mode in
+        --sway-only) apply_sway; return 0 ;;
+    esac
+    write_waybar
+    write_wofi
+    write_gtk
+    write_dunst
+    if [ "$mode" != --files-only ]; then
+        apply_gsettings
+        apply_sway
+    fi
+    if [ "$WRITE_FAILS" -gt 0 ]; then return 1; fi
+    return 0
+}
+
+# Ask running components to pick up new files. Best effort.
+reload_ui() {
+    uid=$(id -u)
+    pkill -U "$uid" -USR2 -x waybar 2>/dev/null
+    if have dunstctl && dunstctl reload >/dev/null 2>&1; then
+        return 0
+    fi
+    if pgrep -U "$uid" -x dunst >/dev/null 2>&1 && have dunst; then
+        debug "restarting dunst (no 'dunstctl reload' in this version)"
+        pkill -U "$uid" -x dunst 2>/dev/null
+        (setsid dunst >/dev/null 2>&1 &)
+    fi
+    return 0
+}
+
+set_user_key() {
+    case $1 in GLASS_*) ;; *) die "not a glass key: $1" ;; esac
+    case $1 in *[!A-Z0-9_]*) die "bad key: $1" ;; esac
+    case $2 in ''|*[!A-Za-z0-9#._\ -]*) die "bad value for $1" ;; esac
+    mkdir -p "$CFG/luxenos" || die "cannot create $CFG/luxenos"
+    tmp=$(mktemp "$CFG/luxenos/glass.conf.XXXXXX") || die "cannot write $CFG/luxenos"
+    CUR_TMP=$tmp
+    found=0
+    if [ -f "$USER_CONF" ]; then
+        while IFS= read -r l || [ -n "$l" ]; do
+            case $l in
+                "$1="*) printf '%s=%s\n' "$1" "$2"; found=1 ;;
+                *) printf '%s\n' "$l" ;;
+            esac
+        done < "$USER_CONF" > "$tmp"
+    else
+        printf '# LuxenOS glass overrides for this user. See /etc/luxenos/glass.conf.\n' > "$tmp"
+    fi
+    if [ "$found" -eq 0 ]; then printf '%s=%s\n' "$1" "$2" >> "$tmp"; fi
+    mv -f "$tmp" "$USER_CONF" || die "cannot update $USER_CONF"
+    CUR_TMP=""
+}
+
+cmd_get() {
+    # Palette names only need the config, not the compositor: quick and free
+    # of side effects (used by the lock-screen wrapper).
+    case ${1:-} in
+        base|text|accent|theme|preset|radius) resolve_config ;;
+        *) prepare ;;
+    esac
+    case ${1:-} in
+        base) printf '%s\n' "${BASE#'#'}" ;;
+        text) printf '%s\n' "${TEXT#'#'}" ;;
+        accent) printf '%s\n' "${GLASS_ACCENT#'#'}" ;;
+        opacity) printf '%s\n' "$OPA" ;;
+        radius) printf '%s\n' "$GLASS_RADIUS" ;;
+        theme) printf '%s\n' "$GLASS_THEME" ;;
+        preset) printf '%s\n' "$GLASS_PRESET" ;;
+        compositor) printf '%s\n' "$COMP" ;;
+        effects) printf '%s\n' "$FX" ;;
+        blur) printf '%s\n' "$BLUR_ON" ;;
+        animation_ms) printf '%s\n' "$GLASS_ANIM_MS" ;;
+        *) die "unknown name '${1:-}' (base text accent opacity radius theme preset compositor effects blur animation_ms)" ;;
+    esac
+}
+
+cmd_status() {
+    prepare
+    cat <<EOS
+glass enabled     $GLASS_ENABLE
+theme             $GLASS_THEME
+preset            $GLASS_PRESET
+compositor        $COMP
+  detected by     $COMP_HOW
+compositor fx     $FX  (GLASS_EFFECTS=$GLASS_EFFECTS)
+blur active       $BLUR_ON  (radius $GLASS_BLUR_RADIUS, passes $GLASS_BLUR_PASSES)
+opacity           $OPA%  (configured $GLASS_OPACITY%, min contrast $GLASS_MIN_CONTRAST:1)
+border            ${BOP}% x ${GLASS_BORDER_WIDTH}px
+radius            ${R}px
+shadow            $GLASS_SHADOW
+animation         ${GLASS_ANIM_MS}ms  (reduce motion: $GLASS_REDUCE_MOTION)
+gaps              ${GLASS_GAPS}px
+accent            $GLASS_ACCENT
+font              $GLASS_FONT ${GLASS_FONT_SIZE}px
+EOS
+}
+
+cmd_namespaces() {
+    resolve_config
+    printf 'bar        %s\n' "$(ns_bar)"
+    printf 'launcher   %s\n' "$(ns_launcher)"
+    printf 'notify     %s\n' "$(ns_notify)"
+    printf '\nNamespaces are chosen by each program and are not listed by Sway IPC.\nTo verify one: WAYLAND_DEBUG=client <program> 2>&1 | grep get_layer_surface\n'
+}
+
+# ---------------------------------------------------------------- dispatch --
+
+ARGS=""
+for a in "$@"; do
+    case $a in
+        --debug) DEBUG=1 ;;
+        *) ARGS="$ARGS
+$a" ;;
+    esac
+done
+OLDIFS=$IFS
+IFS='
+'
+# shellcheck disable=SC2086  # intentional split on newlines (arguments never contain them)
+set -- $ARGS
+IFS=$OLDIFS
+
+case "${1:-}" in
+    apply)
+        cmd_apply "${2:-}"
+        exit $?
+        ;;
+    preset)
+        case "${2:-}" in
+            flat) set_user_key GLASS_ENABLE no ;;
+            performance|balanced|rich)
+                set_user_key GLASS_ENABLE yes
+                set_user_key GLASS_PRESET "$2"
+                ;;
+            *) die "usage: luxenos-glass preset performance|balanced|rich|flat" ;;
+        esac
+        cmd_apply; reload_ui
+        ;;
+    theme)
+        case "${2:-}" in
+            dark|light) set_user_key GLASS_THEME "$2" ;;
+            *) die "usage: luxenos-glass theme dark|light" ;;
+        esac
+        cmd_apply; reload_ui
+        ;;
+    set)
+        [ $# -eq 3 ] || die "usage: luxenos-glass set GLASS_KEY VALUE"
+        set_user_key "$2" "$3"
+        cmd_apply; reload_ui
+        ;;
+    get) cmd_get "${2:-}" ;;
+    reset)
+        if [ -f "$USER_CONF" ]; then mv -f "$USER_CONF" "$USER_CONF.bak"; fi
+        cmd_apply; reload_ui
+        ;;
+    status) cmd_status ;;
+    namespaces) cmd_namespaces ;;
+    *)
+        sed -n '/^# Usage:/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+        exit 2
+        ;;
+esac
+exit 0

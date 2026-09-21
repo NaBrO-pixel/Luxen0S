@@ -1,0 +1,33 @@
+#!/bin/sh
+# Start whichever polkit authentication agent is installed, so graphical
+# privilege prompts work under Sway (needed by luxenos-deb-install and
+# anything else that uses pkexec). Debian ships agents in different places
+# depending on the package, so look in the known locations.
+
+if pgrep -f 'polkit.*authentication-agent|lxpolkit' >/dev/null 2>&1; then
+    exit 0
+fi
+
+for agent in \
+    /usr/lib/x86_64-linux-gnu/libexec/polkit-kde-authentication-agent-1 \
+    /usr/libexec/polkit-kde-authentication-agent-1 \
+    /usr/lib/polkit-kde-authentication-agent-1 \
+    /usr/lib/x86_64-linux-gnu/libexec/polkit-gnome-authentication-agent-1 \
+    /usr/libexec/polkit-gnome-authentication-agent-1 \
+    /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 \
+    /usr/bin/lxpolkit
+do
+    if [ -x "$agent" ]; then
+        exec "$agent"
+    fi
+done
+
+# Last resort: search the usual library directories.
+found=$(find /usr/lib /usr/libexec -maxdepth 4 -type f -perm -u+x \
+    -name 'polkit-*-authentication-agent-1' 2>/dev/null | head -n 1)
+if [ -n "$found" ]; then
+    exec "$found"
+fi
+
+echo "luxenos-polkit-agent: no polkit authentication agent found" >&2
+exit 1
