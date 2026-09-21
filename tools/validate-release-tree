@@ -185,6 +185,54 @@ check_file config/includes.chroot/usr/share/plymouth/themes/luxenos/luxenos.plym
 check_file config/includes.chroot/usr/share/plymouth/themes/luxenos/luxenos.script
 check_file config/includes.chroot/boot/grub/themes/luxenos/theme.txt
 
+# Image variants: both must configure, and only the live variant may preset the
+# desktop session. Uses a stub `lb` so this runs without live-build installed.
+variant_dir=$(mktemp -d)
+cat > "$variant_dir/lb" <<'STUB'
+#!/bin/sh
+for a in "$@"; do printf '%s\n' "$a"; done
+STUB
+chmod +x "$variant_dir/lb"
+
+variant_bootappend() {
+    VARIANT="$1" PATH="$variant_dir:$PATH" sh auto/config 2>/dev/null \
+        | grep -m1 '^boot=live '
+}
+
+installer_append=$(variant_bootappend installer) || {
+    rm -rf "$variant_dir"
+    fail "auto/config produced no boot parameters for VARIANT=installer"
+}
+live_append=$(variant_bootappend live) || {
+    rm -rf "$variant_dir"
+    fail "auto/config produced no boot parameters for VARIANT=live"
+}
+
+case $installer_append in
+    *luxenos.session=desktop*)
+        rm -rf "$variant_dir"
+        fail "VARIANT=installer must not preset luxenos.session=desktop"
+        ;;
+esac
+
+case $live_append in
+    *luxenos.session=desktop*) ;;
+    *)
+        rm -rf "$variant_dir"
+        fail "VARIANT=live must preset luxenos.session=desktop"
+        ;;
+esac
+
+if VARIANT=nonsense PATH="$variant_dir:$PATH" sh auto/config >/dev/null 2>&1; then
+    rm -rf "$variant_dir"
+    fail "auto/config accepted an invalid VARIANT"
+fi
+rm -rf "$variant_dir"
+
+# The parameter the live variant sets must be the one the session script acts on.
+grep -q 'luxenos.session=desktop' config/includes.chroot/etc/profile.d/luxenos-session.sh \
+    || fail "luxenos-session.sh does not act on luxenos.session=desktop"
+
 # CI
 check_file .github/workflows/validate.yml
 

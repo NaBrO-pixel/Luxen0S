@@ -5,8 +5,11 @@
 #
 # The result is a standard live-build "iso-hybrid" image: a live system
 # (squashfs + live-boot/live-config) that boots from USB/DVD on BIOS and UEFI.
-# By default the live session starts the Calamares installer; the installer
-# copies this same root filesystem to disk. See README.md ("How LuxenOS boots").
+# VARIANT picks which session that image boots into by default: "installer"
+# (the Calamares installer -- what a traditional install disc does, and the
+# default) or "live" (the full Sway desktop). Both images carry the same root
+# filesystem and the same installer; the installer copies that root filesystem
+# to disk. See README.md ("How LuxenOS boots").
 #
 # Option names follow live-build 5 (Debian 13 "trixie"): --binary-image,
 # --bootloaders, --bootappend-live. Hostname, live user, locale and timezone
@@ -35,11 +38,41 @@ MIRROR_BOOTSTRAP="${MIRROR_BOOTSTRAP:-http://deb.debian.org/debian}"
 MIRROR_CHROOT="${MIRROR_CHROOT:-http://deb.debian.org/debian}"
 MIRROR_CHROOT_SECURITY="${MIRROR_CHROOT_SECURITY:-http://security.debian.org/debian-security}"
 
+# Build variant: which session the live image boots into by default.
+#   installer  straight into the Calamares installer (default)
+#   live       straight into the full Sway desktop; the installer is still
+#              installed and can be started from the launcher
+# Nothing else differs between the two images -- same packages, same root
+# filesystem, same installer -- so the choice is only about the default
+# session and the ISO labels below.
+VARIANT="${VARIANT:-installer}"
+
+case $VARIANT in
+    installer)
+        LUXENOS_SESSION=""
+        ;;
+    live)
+        # Read by /etc/profile.d/luxenos-session.sh, which starts the installer
+        # kiosk unless this parameter is on the kernel command line.
+        LUXENOS_SESSION="luxenos.session=desktop"
+        ;;
+    *)
+        echo "ERROR: VARIANT must be 'live' or 'installer' (got '$VARIANT')" >&2
+        exit 1
+        ;;
+esac
+
 # ISO boot: syslinux (BIOS) + grub-efi (UEFI). The GRUB theme shipped in
 # config/includes.chroot/boot/grub/themes/luxenos/ applies to the installed
 # system. Secure Boot / shim support is not configured here.
-ISO_APPLICATION="LuxenOS"
-ISO_VOLUME="LUXENOS"
+# Labels differ per variant so the two images are told apart on a USB stick.
+if [ "$VARIANT" = live ]; then
+    ISO_APPLICATION="${ISO_APPLICATION:-LuxenOS Live}"
+    ISO_VOLUME="${ISO_VOLUME:-LUXENOS-LIVE}"
+else
+    ISO_APPLICATION="${ISO_APPLICATION:-LuxenOS}"
+    ISO_VOLUME="${ISO_VOLUME:-LUXENOS}"
+fi
 
 # ============================================================================
 # Helper Functions
@@ -51,12 +84,15 @@ Usage: $0 [options]
 
 Configure the live-build environment for LuxenOS.
 
-LuxenOS is built as a live/installer hybrid ISO. Booting the USB starts the
-Calamares installer (add luxenos.session=desktop to the kernel command line to
-get the full Sway desktop in the live session instead). After installation the
-system boots to a tty1 login that starts Sway.
+LuxenOS is built as a live/installer hybrid ISO. VARIANT selects which session
+the image boots into: the Calamares installer (VARIANT=installer, the default)
+or the full Sway desktop (VARIANT=live). Either default can be overridden at
+boot by editing the kernel command line: add luxenos.session=desktop for the
+desktop, remove it for the installer. After installation the system boots to a
+tty1 login that starts Sway.
 
 Environment variables:
+  VARIANT                   Image variant: installer or live (default: installer)
   DISTRIBUTION              Debian release (default: trixie)
   ARCHITECTURES             Target architecture (default: amd64)
   BOOTLOADERS               ISO bootloaders (default: syslinux,grub-efi)
@@ -82,7 +118,8 @@ Options:
   Any other options are passed to 'lb config'
 
 Examples:
-  $0
+  $0                     Build the installer image (boots into Calamares)
+  VARIANT=live $0        Build the live image (boots into the Sway desktop)
 USAGE
 }
 
@@ -91,13 +128,18 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     exit 0
 fi
 
+BOOTAPPEND_LIVE="boot=live components $BOOTAPPEND hostname=$HOSTNAME username=$USERNAME locales=$LOCALE timezone=$TIMEZONE"
+if [ -n "$LUXENOS_SESSION" ]; then
+    BOOTAPPEND_LIVE="$BOOTAPPEND_LIVE $LUXENOS_SESSION"
+fi
+
 lb config noauto \
     --binary-image iso-hybrid \
     --mode debian \
     --distribution "$DISTRIBUTION" \
     --architecture "$ARCHITECTURES" \
     --archive-areas "$ARCHIVE_AREAS" \
-    --bootappend-live "boot=live components $BOOTAPPEND hostname=$HOSTNAME username=$USERNAME locales=$LOCALE timezone=$TIMEZONE" \
+    --bootappend-live "$BOOTAPPEND_LIVE" \
     --bootloaders "$BOOTLOADERS" \
     --mirror-bootstrap "$MIRROR_BOOTSTRAP" \
     --mirror-chroot "$MIRROR_CHROOT" \

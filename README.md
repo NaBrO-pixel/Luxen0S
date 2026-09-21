@@ -124,6 +124,10 @@ The ISO is a standard `live-build` **live/installer hybrid** (`iso-hybrid`,
 BIOS via syslinux and UEFI via GRUB). It is *not* a pre-installed disk image:
 the installed system exists only after Calamares has copied it to disk.
 
+The steps below describe the default `installer` image. A `live` image
+(`VARIANT=live`, see [Image variants](#image-variants)) is identical except
+that step 1 starts the full Sway desktop instead of the installer kiosk.
+
 **1. Live environment (booting the USB without installing).**
 The kernel command line contains `boot=live`, so `live-boot` mounts the
 read-only squashfs with a RAM overlay and `live-config` creates the live
@@ -211,9 +215,10 @@ used where a value is missing, and the hook logs the effective image type):
 
 Read by `auto/config` (`DISTRIBUTION`, `ARCHITECTURES`, `ARCHIVE_AREAS`,
 `HOSTNAME`, `USERNAME`, `LOCALE`, `TIMEZONE`, mirrors; run `auto/config --help`):
-`BOOTLOADERS` (default `syslinux,grub-efi`) and `BOOTAPPEND` (default
-`quiet splash`). `USERNAME` is the live user and must match
-`etc/calamares/modules/removeuser.conf`.
+`BOOTLOADERS` (default `syslinux,grub-efi`), `BOOTAPPEND` (default
+`quiet splash`) and `VARIANT` (`installer` or `live`, default `installer`;
+see [Image variants](#image-variants)). `USERNAME` is the live user and must
+match `etc/calamares/modules/removeuser.conf`.
 
 Checksum verification is fail-closed: without `AURORA_STORE_SHA256` (and
 without `LUXENOS_ALLOW_UNPINNED_DOWNLOADS=1`), the build stops rather than
@@ -230,10 +235,34 @@ sudo lb config
 sudo lb build
 ```
 
-Produces `live-image-amd64.hybrid.iso` in the repo directory. Boot it to run the
-installer (see [How LuxenOS boots](#how-luxenos-boots)). A full build can take
-30-90 minutes. `auto/config` uses live-build 5 option names (Debian 13);
+Produces `live-image-amd64.hybrid.iso` in the repo directory. A full build can
+take 30-90 minutes. `auto/config` uses live-build 5 option names (Debian 13);
 `lb config` from an older live-build will reject them.
+
+### Image variants
+
+`VARIANT` selects which session the image boots into by default:
+
+| `VARIANT` | Boots into | ISO volume label |
+| --- | --- | --- |
+| `installer` (default) | The Calamares installer kiosk | `LUXENOS` |
+| `live` | The full Sway desktop | `LUXENOS-LIVE` |
+
+```sh
+sudo lb clean --purge && sudo lb config && sudo lb build                  # installer image
+sudo lb clean --purge && sudo VARIANT=live lb config && sudo lb build     # live image
+```
+
+Both images contain the same packages, the same root filesystem and the same
+installer -- only the default session differs. The live image still has
+Calamares, so you can install from it straight out of the launcher; the
+installer image can be pushed to the desktop by adding `luxenos.session=desktop`
+to the kernel command line (press `e` in the GRUB menu).
+
+Build one variant at a time: `lb config` writes into `config/`, so run
+`lb clean --purge` between variants. The variant is recorded only in the ISO
+volume label, so rename the output before building the second one if you want
+to keep both.
 
 ## Testing with QEMU
 
