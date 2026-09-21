@@ -1,0 +1,79 @@
+name: Build LuxenOS ISO
+
+# Manual only: a full `lb build` takes 30-90 minutes, so it does not run on
+# every push. Actions tab -> "Build LuxenOS ISO" -> "Run workflow".
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'Which image to build'
+        type: choice
+        options: [installer, live]
+        default: installer
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # A GitHub runner ships ~10-20 GB of toolchains LuxenOS does not need,
+      # and the build wants every gigabyte it can get.
+      - name: Free disk space on the runner
+        run: |
+          echo "before:"; df -h / | tail -1
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost
+          echo "after:"; df -h / | tail -1
+
+      # live-build runs in a Debian 13 container (auto/config needs live-build 5,
+      # which ubuntu-latest does not have) and needs --privileged for the
+      # mount/chroot/loop operations a live image build performs.
+      - name: Build the ISO
+        env:
+          VARIANT: ${{ inputs.variant }}
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD":/build -w /build \
+            -e VARIANT="$VARIANT" \
+            debian:trixie sh -c '
+              set -eu
+              apt-get update
+              apt-get install -y --no-install-recommends live-build curl ca-certificates
+              lb config
+              lb build
+            '
+
+      - name: Name the image after its variant
+        env:
+          VARIANT: ${{ inputs.variant }}
+        run: |
+          set -eu
+          iso=$(ls ./*.hybrid.iso 2>/dev/null | head -1)
+          if [ -z "$iso" ]; then
+            echo "no ISO was produced"
+            exit 1
+          fi
+          sudo mv "$iso" "luxenos-$VARIANT-amd64.iso"
+          sha256sum "luxenos-$VARIANT-amd64.iso" | tee "luxenos-$VARIANT-amd64.iso.sha256"
+          ls -lh "luxenos-$VARIANT-amd64.iso"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luxenos-${{ inputs.variant }}-iso
+          path: |
+            luxenos-*-amd64.iso
+            luxenos-*-amd64.iso.sha256
+          retention-days: 7
+          # The ISO is already compressed; re-compressing it just burns time.
+          compression-level: 0
+          if-no-files-found: error
