@@ -19,16 +19,20 @@ jobs:
         run: ./tools/validate-release-tree
 
   lb-config-dry-run:
+    # auto/config uses live-build 5 option names (Debian 13). ubuntu-latest
+    # ships an older live-build that rejects them, so run in a Debian 13
+    # container instead.
     runs-on: ubuntu-latest
     needs: validate-tree
+    container: debian:trixie
     steps:
+      - name: Install live-build (Debian 13) and git
+        run: apt-get update && apt-get install -y --no-install-recommends live-build git ca-certificates
+
       - uses: actions/checkout@v4
 
-      - name: Install live-build
-        run: sudo apt-get update && sudo apt-get install -y live-build
-
       - name: lb config (no build)
-        run: sudo lb config
+        run: lb config
         # A full `lb build` + QEMU boot smoke test is a longer-running job
         # tracked as a follow-up; this only proves the config step itself
         # is well-formed.
