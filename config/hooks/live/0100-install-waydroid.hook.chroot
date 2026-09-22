@@ -178,14 +178,18 @@ log "Waydroid repository configured successfully"
 
 # Update package lists and install Waydroid
 log "Updating package lists..."
-if ! log_exec apt-get update; then
-    log "ERROR: apt-get update failed (exit code: $?)"
+update_status=0
+log_exec apt-get update || update_status=$?
+if [ "$update_status" -ne 0 ]; then
+    log "ERROR: apt-get update failed (exit code: $update_status)"
     exit 1
 fi
 
 log "Installing Waydroid package..."
-if ! log_exec apt-get install -y waydroid; then
-    log "ERROR: Failed to install Waydroid package (exit code: $?)"
+install_status=0
+log_exec apt-get install -y waydroid || install_status=$?
+if [ "$install_status" -ne 0 ]; then
+    log "ERROR: Failed to install Waydroid package (exit code: $install_status)"
     exit 1
 fi
 log "Waydroid package installed successfully"
@@ -212,8 +216,10 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 UNIT
 
-if ! log_exec systemctl enable waydroid-first-init.service; then
-    log "ERROR: Failed to enable waydroid-first-init.service (exit code: $?)"
+enable_status=0
+log_exec systemctl enable waydroid-first-init.service || enable_status=$?
+if [ "$enable_status" -ne 0 ]; then
+    log "ERROR: Failed to enable waydroid-first-init.service (exit code: $enable_status)"
     exit 1
 fi
 log "Waydroid first-boot service enabled"
@@ -265,8 +271,10 @@ fi
 
 # Final verification
 log "Verifying Waydroid installation..."
-if ! waydroid --version >/dev/null 2>&1; then
-    log "ERROR: Waydroid verification failed (exit code: $?)"
+verify_status=0
+waydroid --version >/dev/null 2>&1 || verify_status=$?
+if [ "$verify_status" -ne 0 ]; then
+    log "ERROR: Waydroid verification failed (exit code: $verify_status)"
     exit 1
 fi
 log "Waydroid installation verified successfully"
