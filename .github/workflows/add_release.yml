@@ -1,0 +1,8 @@
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: luxenos-${{ github.run_number }}
+          name: LuxenOS Build ${{ github.run_number }}
+          files: "*.7z"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
