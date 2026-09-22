@@ -75,7 +75,7 @@ jobs:
           echo "=== largest directories in the chroot ==="
           sudo du -xh --max-depth=2 chroot 2>/dev/null | sort -rh | head -25 || true
 
-      - name: Name the image after its variant
+      - name: Name the image, and split it if it exceeds the release cap
         env:
           VARIANT: ${{ inputs.variant }}
         run: |
@@ -85,16 +85,61 @@ jobs:
             echo "no ISO was produced"
             exit 1
           fi
-          sudo mv "$iso" "luxenos-$VARIANT-amd64.iso"
-          sha256sum "luxenos-$VARIANT-amd64.iso" | tee "luxenos-$VARIANT-amd64.iso.sha256"
-          ls -lh "luxenos-$VARIANT-amd64.iso"
+          name="luxenos-$VARIANT-amd64.iso"
+          sudo mv "$iso" "$name"
+          sudo chown "$(id -u):$(id -g)" "$name"
+          sha256sum "$name" | tee "$name.sha256"
+          ls -lh "$name"
+
+          # A single GitHub release asset is capped at 2 GiB. Ship the image in
+          # parts when it does not fit, and as one file when it does, so this
+          # stops splitting by itself once the image is small enough.
+          limit=2147483648
+          size=$(stat -c%s "$name")
+          if [ "$size" -le "$limit" ]; then
+            echo "$name is $size bytes, within the 2 GiB release cap: not splitting"
+            exit 0
+          fi
+
+          echo "$name is $size bytes, over the 2 GiB release cap: splitting"
+          split -b 1900M -d "$name" "$name.part"
+          # Deliberately NOT "$name.parts.sha256": that name is matched by the
+          # "$name.part*" glob used to reassemble, and cat would append the
+          # checksum file into the image.
+          sha256sum "$name".part[0-9][0-9] | tee SHA256SUMS.parts
+          # Keeping the whole image as well would double the artifact for no
+          # gain: the parts plus the recorded digest rebuild and verify it.
+          rm -f "$name"
+          ls -lh "$name".part[0-9][0-9]
+
+          printf '%s\n' \
+            "# LuxenOS $VARIANT image (split)" \
+            "" \
+            "A single GitHub release asset is capped at 2 GiB and this image is" \
+            "larger, so it ships in parts." \
+            "" \
+            "Reassemble:" \
+            "" \
+            "    cat $name.part[0-9][0-9] > $name" \
+            "" \
+            "Verify the reassembled image against the digest of the original:" \
+            "" \
+            "    sha256sum -c $name.sha256" \
+            "" \
+            "To check the downloads before reassembling:" \
+            "" \
+            "    sha256sum -c SHA256SUMS.parts" \
+            > REASSEMBLE.md
 
       - uses: actions/upload-artifact@v4
         with:
           name: luxenos-${{ inputs.variant }}-iso
           path: |
             luxenos-*-amd64.iso
+            luxenos-*-amd64.iso.part[0-9][0-9]
             luxenos-*-amd64.iso.sha256
+            SHA256SUMS.parts
+            REASSEMBLE.md
           retention-days: 7
           # The ISO is already compressed; re-compressing it just burns time.
           compression-level: 0
