@@ -32,7 +32,7 @@ case "$DOWNLOAD_RETRIES" in ''|*[!0-9]*) DOWNLOAD_RETRIES=3 ;; esac
 case "$CURL_TIMEOUT" in ''|*[!0-9]*) CURL_TIMEOUT=120 ;; esac
 
 # Verify required commands are available
-for cmd in curl sh apt-get systemctl mkdir grep head; do
+for cmd in curl bash apt-get systemctl mkdir grep head; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         log "ERROR: Required command '$cmd' not found"
         exit 1
@@ -167,8 +167,11 @@ if ! validate_installer "$WAYDROID_INSTALL_SCRIPT"; then
 fi
 
 log "Executing Waydroid repository installer..."
-if ! log_exec sh "$WAYDROID_INSTALL_SCRIPT"; then
-    log "ERROR: Waydroid repository installer failed (exit code: $?)"
+if log_exec bash "$WAYDROID_INSTALL_SCRIPT"; then
+    :
+else
+    status=$?
+    log "ERROR: Waydroid repository installer failed (exit code: $status)"
     exit 1
 fi
 log "Waydroid repository configured successfully"
