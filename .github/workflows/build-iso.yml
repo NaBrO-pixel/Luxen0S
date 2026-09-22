@@ -53,6 +53,28 @@ jobs:
               lb build
             '
 
+      # What is actually taking up the space, so shrinking the image is driven
+      # by numbers instead of guesswork. Best-effort: a report must never fail
+      # a build that otherwise produced an ISO.
+      - name: Report image size breakdown
+        continue-on-error: true
+        run: |
+          set -u
+          echo "=== ISO and squashfs ==="
+          ls -l ./*.hybrid.iso 2>/dev/null || true
+          sudo find binary -name filesystem.squashfs -exec ls -l {} + 2>/dev/null || true
+          echo
+          echo "=== chroot total (uncompressed) ==="
+          sudo du -sh chroot 2>/dev/null || true
+          echo
+          echo "=== 40 largest packages, installed-size KB ==="
+          sudo dpkg-query --admindir=chroot/var/lib/dpkg -W \
+            -f='${Installed-Size}\t${Package}\n' 2>/dev/null \
+            | sort -rn | head -40 || true
+          echo
+          echo "=== largest directories in the chroot ==="
+          sudo du -xh --max-depth=2 chroot 2>/dev/null | sort -rh | head -25 || true
+
       - name: Name the image after its variant
         env:
           VARIANT: ${{ inputs.variant }}
