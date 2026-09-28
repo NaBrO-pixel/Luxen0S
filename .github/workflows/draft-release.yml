@@ -1,0 +1,109 @@
+name: Draft LuxenOS release
+
+# Manual only. Takes the image artifact a "Build LuxenOS ISO" run uploaded
+# (luxenos-<variant>-iso.zip), extracts it, and drafts a GitHub release with
+# the extracted files as assets. The release stays a draft until someone
+# publishes it from the Releases page.
+#
+# Build artifacts are kept for 7 days (see build-iso.yml), so draft the
+# release within that window.
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'Which image to release'
+        type: choice
+        options: [installer, live]
+        default: installer
+        required: true
+      run_id:
+        description: 'Build run ID to take the image from (empty = newest build of this variant)'
+        type: string
+        required: false
+      tag:
+        description: 'Release tag (empty = luxenos-<variant>-<build run ID>)'
+        type: string
+        required: false
+
+permissions:
+  contents: write   # create the draft release
+  actions: read     # read artifacts of other workflow runs
+
+jobs:
+  draft-release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      VARIANT: ${{ inputs.variant }}
+      RUN_ID: ${{ inputs.run_id }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Find the build run and its artifact
+        id: find
+        run: |
+          set -eu
+          artifact="luxenos-$VARIANT-iso"
+          # Artifacts come back newest first; skip ones already expired.
+          if [ -n "$RUN_ID" ]; then
+            query="repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?name=$artifact"
+          else
+            query="repos/$GH_REPO/actions/artifacts?name=$artifact&per_page=100"
+          fi
+          found=$(gh api "$query" --jq \
+            '[.artifacts[] | select(.expired | not)][0]
+             | select(. != null)
+             | "\(.workflow_run.id) \(.workflow_run.head_sha)"')
+          if [ -z "$found" ]; then
+            echo "no unexpired $artifact artifact found${RUN_ID:+ in run $RUN_ID}"
+            echo "run \"Build LuxenOS ISO\" with variant=$VARIANT first"
+            exit 1
+          fi
+          run_id=${found% *}
+          sha=${found#* }
+          echo "using $artifact from run $run_id (commit $sha)"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG:-luxenos-$VARIANT-$run_id}" >> "$GITHUB_OUTPUT"
+
+      # gh run download fetches the zip and extracts it, so dist/ holds the
+      # image (or its parts), the checksums and REASSEMBLE.md when split.
+      - name: Download and extract the image artifact
+        env:
+          ARTIFACT: ${{ steps.find.outputs.artifact }}
+          BUILD_RUN: ${{ steps.find.outputs.run_id }}
+        run: |
+          set -eu
+          gh run download "$BUILD_RUN" -n "$ARTIFACT" -D dist
+          ls -lh dist
+
+      - name: Draft the release
+        env:
+          BUILD_RUN: ${{ steps.find.outputs.run_id }}
+          SHA: ${{ steps.find.outputs.sha }}
+          RELEASE_TAG: ${{ steps.find.outputs.tag }}
+        run: |
+          set -eu
+          if [ -f dist/REASSEMBLE.md ]; then
+            cp dist/REASSEMBLE.md notes.md
+          else
+            printf '%s\n' \
+              "# LuxenOS $VARIANT image" \
+              "" \
+              "Verify the download:" \
+              "" \
+              "    sha256sum -c luxenos-$VARIANT-amd64.iso.sha256" \
+              > notes.md
+          fi
+          printf '%s\n' "" \
+            "Built by $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$BUILD_RUN" \
+            "from commit $SHA." >> notes.md
+
+          # --target: a draft does not create its tag until it is published;
+          # this pins that tag to the commit the image was built from.
+          gh release create "$RELEASE_TAG" dist/* \
+            --draft \
+            --target "$SHA" \
+            --title "LuxenOS $VARIANT ($RELEASE_TAG)" \
+            --notes-file notes.md
