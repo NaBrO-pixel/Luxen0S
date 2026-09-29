@@ -85,3 +85,7 @@ A full build can take 30–90 minutes.
 
 Include the exact `lb config`/`lb build` command you ran, the relevant
 section of the build log, and your host distro/architecture.
+
+## Important note
+Alwa6s change the YAML file so it puts the correct assets in the release
+
