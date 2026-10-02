@@ -264,11 +264,30 @@ Build one variant at a time: `lb config` writes into `config/`, so run
 volume label, so rename the output before building the second one if you want
 to keep both.
 
+### Image size
+
+The image is built **without Debian's recommended packages**
+(`--apt-recommends false` in `auto/config`) and without apt package lists
+(`--apt-indices false`). Installing every Recommends made the root filesystem
+~5.5 GiB; without them it is ~3.8 GiB. The recommended packages LuxenOS does
+need (live user creation, Wi-Fi, microcode, common laptop firmware, audio
+profiles, SVG icons, ...) are listed in
+`config/package-lists/essentials.list.chroot`. The largest remaining items
+are Wine (64- and 32-bit, ~1.3 GiB installed) and Firefox (~300 MiB).
+
+The installer asks for **10 GiB** of disk (`requiredStorage` in
+`config/includes.chroot/etc/calamares/modules/welcome.conf`, overriding
+Debian's 15 GiB): the installed system, the Waydroid Android image downloaded
+on first boot (~3 GiB), and room for updates. Each "Build LuxenOS ISO" run
+prints a size breakdown; check it before adding packages.
+
 ## Testing with QEMU
 
 ```sh
 sudo apt install qemu-system-x86 qemu-kvm
-qemu-system-x86_64 -m 4096 -enable-kvm -cdrom live-image-amd64.hybrid.iso
+qemu-img create -f qcow2 luxenos-disk.qcow2 10G
+qemu-system-x86_64 -m 4096 -enable-kvm -cdrom live-image-amd64.hybrid.iso \
+    -drive file=luxenos-disk.qcow2,if=virtio
 ```
 
 This boots the installer kiosk. Waydroid needs KVM (`-enable-kvm`) and
@@ -419,9 +438,11 @@ and swap with `free -h`.
   creation. The scripts and configs behind them were tested in isolation; see
   the verification report that accompanies each change.
 - No Secure Boot / shim.
-- `libwayland-dev` and `libinput-dev` in `desktop.list.chroot` are
-  development packages that a runtime desktop does not need; they are kept
-  only because removing them was out of scope for the glass work.
+- The image is built without Debian's *recommended* packages (see "Image
+  size"). Hardware whose firmware is not in
+  `config/package-lists/essentials.list.chroot` (for example NVIDIA or
+  MediaTek Wi-Fi) needs its `firmware-*` package added there, and CJK text
+  needs `fonts-noto-cjk`.
 
 ## Project layout
 
@@ -440,6 +461,7 @@ config/includes.chroot/etc/profile.d/luxenos-session.sh Starts Sway on tty1 (ins
 config/includes.chroot/etc/calamares/                  Installer sequence, branding, post-install cleanup
 config/includes.chroot/usr/libexec/luxenos/            Privileged package helper (pkexec only)
 config/includes.chroot/etc/luxenos/                    glass.conf, wine.conf, updater.conf
+config/package-lists/essentials.list.chroot            Recommended packages LuxenOS needs (the build skips Recommends)
 config/package-lists/wine.list.chroot                  Debian Wine packages (32-bit half via hook 0250)
 config/hooks/live/0250-install-wine-and-integrations.hook.chroot
                                                         i386 multiarch + wine32, MIME/desktop DBs, build-time verification

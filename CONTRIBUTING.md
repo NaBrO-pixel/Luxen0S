@@ -7,7 +7,7 @@ editing files in one of a few well-defined places.
 
 | You want to... | Put it in... |
 | --- | --- |
-| Add/remove a package installed on the image | `config/package-lists/*.list.chroot` |
+| Add/remove a package installed on the image | `config/package-lists/*.list.chroot` (Recommends are not installed: list what you need, see `essentials.list.chroot`) |
 | Change build-time settings (distro, arch, bootloader) | `auto/config` |
 | Run a script during the chroot build | `config/hooks/live/NNNN-description.hook.chroot` (numbered so ordering is explicit) |
 | Ship a file verbatim into the built filesystem | `config/includes.chroot/<absolute path in the final system>` |

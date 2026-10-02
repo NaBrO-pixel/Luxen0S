@@ -7,6 +7,13 @@ name: Draft LuxenOS release
 #
 # Build artifacts are kept for 7 days (see build-iso.yml), so draft the
 # release within that window.
+#
+# Assets: the image as one file (luxenos-<variant>-amd64.iso + .sha256) when it
+# fits GitHub's 2 GiB asset cap, or its parts (+ SHA256SUMS.parts and
+# REASSEMBLE.md) when build-iso.yml had to split it. Every asset is checked
+# against its checksum before the release is drafted. The release notes quote
+# the installer's disk/RAM requirements from the welcome.conf of the commit
+# the image was built from, so they cannot drift from what Calamares checks.
 on:
   workflow_dispatch:
     inputs:
@@ -78,6 +85,45 @@ jobs:
           gh run download "$BUILD_RUN" -n "$ARTIFACT" -D dist
           ls -lh dist
 
+      # Upload exactly the files that make up the image, verified, and refuse
+      # anything unexpected instead of publishing it.
+      - name: Verify the release assets
+        run: |
+          set -eu
+          cd dist
+          name="luxenos-$VARIANT-amd64.iso"
+          [ -f "$name.sha256" ] || { echo "missing $name.sha256"; exit 1; }
+          if [ -f "$name" ]; then
+            sha256sum -c "$name.sha256"
+            expected="$name $name.sha256"
+          elif ls "$name".part[0-9][0-9] >/dev/null 2>&1; then
+            [ -f SHA256SUMS.parts ] || { echo "split image without SHA256SUMS.parts"; exit 1; }
+            [ -f REASSEMBLE.md ] || { echo "split image without REASSEMBLE.md"; exit 1; }
+            sha256sum -c SHA256SUMS.parts
+            # The recorded digest is of the whole image: reassemble to check it.
+            whole=$(cat "$name".part[0-9][0-9] | sha256sum | awk '{print $1}')
+            [ "$whole" = "$(awk '{print $1}' "$name.sha256")" ] \
+              || { echo "reassembled image does not match $name.sha256"; exit 1; }
+            expected="$(ls "$name".part[0-9][0-9] | tr '\n' ' ')$name.sha256 SHA256SUMS.parts REASSEMBLE.md"
+          else
+            echo "neither $name nor its parts are in the artifact"; exit 1
+          fi
+          for f in *; do
+            case " $expected " in
+              *" $f "*) ;;
+              *) echo "unexpected file in the artifact: $f"; exit 1 ;;
+            esac
+          done
+          echo "assets: $expected"
+
+      # Only the installer's requirements file is needed, at the build commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.find.outputs.sha }}
+          path: src
+          sparse-checkout: config/includes.chroot/etc/calamares/modules/welcome.conf
+          sparse-checkout-cone-mode: false
+
       - name: Draft the release
         env:
           BUILD_RUN: ${{ steps.find.outputs.run_id }}
@@ -85,17 +131,37 @@ jobs:
           RELEASE_TAG: ${{ steps.find.outputs.tag }}
         run: |
           set -eu
+          name="luxenos-$VARIANT-amd64.iso"
           if [ -f dist/REASSEMBLE.md ]; then
             cp dist/REASSEMBLE.md notes.md
+            size=$(cat dist/"$name".part[0-9][0-9] | wc -c)
           else
             printf '%s\n' \
               "# LuxenOS $VARIANT image" \
               "" \
               "Verify the download:" \
               "" \
-              "    sha256sum -c luxenos-$VARIANT-amd64.iso.sha256" \
+              "    sha256sum -c $name.sha256" \
               > notes.md
+            size=$(stat -c%s "dist/$name")
           fi
+
+          welcome=src/config/includes.chroot/etc/calamares/modules/welcome.conf
+          if [ -f "$welcome" ]; then
+            storage=$(awk '$1 == "requiredStorage:" {print $2}' "$welcome")
+            ram=$(awk '$1 == "requiredRam:" {print $2}' "$welcome")
+          fi
+          image_mib=$(( (size + 1048575) / 1048576 ))
+          # Smallest common USB stick size (GB) the image fits on.
+          usb=4
+          while [ $(( usb * 1000000000 )) -lt "$size" ]; do usb=$(( usb * 2 )); done
+          printf '%s\n' "" \
+            "## Requirements" \
+            "" \
+            "- Image size: $image_mib MiB; a USB stick of $usb GB or larger" \
+            "- Install disk: ${storage:-unknown} GiB or more" \
+            "- RAM: ${ram:-unknown} GiB or more" \
+            >> notes.md
           printf '%s\n' "" \
             "Built by $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$BUILD_RUN" \
             "from commit $SHA." >> notes.md

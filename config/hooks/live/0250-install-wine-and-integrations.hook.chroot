@@ -31,7 +31,7 @@ if [ "$arch" = amd64 ]; then
     log "Enabling i386 multiarch for 32-bit Wine"
     dpkg --add-architecture i386
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y wine32:i386 libwine:i386 \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wine32:i386 libwine:i386 \
         || die "could not install wine32:i386 from the Debian archive"
 else
     log "Architecture $arch: skipping wine32 (only needed on amd64)"

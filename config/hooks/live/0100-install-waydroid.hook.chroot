@@ -187,7 +187,7 @@ fi
 
 log "Installing Waydroid package..."
 install_status=0
-log_exec apt-get install -y waydroid || install_status=$?
+log_exec apt-get install -y --no-install-recommends waydroid || install_status=$?
 if [ "$install_status" -ne 0 ]; then
     log "ERROR: Failed to install Waydroid package (exit code: $install_status)"
     exit 1
