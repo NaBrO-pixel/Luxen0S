@@ -133,8 +133,17 @@ if [ -n "$LUXENOS_SESSION" ]; then
     BOOTAPPEND_LIVE="$BOOTAPPEND_LIVE $LUXENOS_SESSION"
 fi
 
+# Image size: live-build installs every Recommends by default, which made the
+# root filesystem ~5.5 GiB. --apt-recommends false brings it to ~3.8 GiB; the
+# recommended packages LuxenOS really needs are listed explicitly in
+# config/package-lists/essentials.list.chroot. --apt-indices false leaves the
+# apt package lists (~100-200 MB with i386 enabled) out of the image; the
+# installed system fetches them with "apt-get update" (unattended-upgrades,
+# luxenos-updater, and luxenos-deb-install's "Refresh and retry").
 lb config noauto \
     --binary-image iso-hybrid \
+    --apt-recommends false \
+    --apt-indices false \
     --mode debian \
     --distribution "$DISTRIBUTION" \
     --architecture "$ARCHITECTURES" \

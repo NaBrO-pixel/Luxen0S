@@ -17,8 +17,6 @@ xwayland
 xdg-desktop-portal
 xdg-desktop-portal-wlr
 xdg-desktop-portal-gtk
-libwayland-dev
-libinput-dev
 foot
 wofi
 grim

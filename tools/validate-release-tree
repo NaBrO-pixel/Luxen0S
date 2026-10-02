@@ -42,6 +42,8 @@ check_file config/package-lists/android.list.chroot
 check_file config/package-lists/installer.list.chroot
 check_file config/package-lists/security.list.chroot
 check_file config/package-lists/wine.list.chroot
+check_file config/package-lists/essentials.list.chroot
+check_file config/includes.chroot/etc/calamares/modules/welcome.conf
 
 # Hooks
 check_executable config/hooks/live/0100-install-waydroid.hook.chroot

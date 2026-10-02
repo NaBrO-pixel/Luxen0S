@@ -1,0 +1,61 @@
+# Packages LuxenOS needs that Debian only *recommends*.
+#
+# auto/config builds with --apt-recommends false: installing every
+# Recommends pulled in ~470 extra packages (~2 GiB installed: all of Noto
+# CJK/extra, every GPU/Wi-Fi firmware blob, Vulkan, a C preprocessor, perl,
+# ImageMagick, qemu-utils, distrobuilder, ...). This list puts back only the
+# recommended packages something in LuxenOS actually relies on. Before you
+# remove a line, check what uses it; when a feature breaks after a package
+# update, the fix is usually a line here.
+
+# Live session: live-config needs these to create the live user and apply the
+# locales=/keyboard boot parameters.
+user-setup
+locales
+keyboard-configuration
+console-setup
+
+# Install target: filesystems Calamares formats, and LUKS unlock at boot.
+e2fsprogs
+btrfs-progs
+systemd-cryptsetup
+
+# Networking (network-manager recommends): Wi-Fi does not work without
+# wpasupplicant; wireless-regdb sets the legal channels/power.
+wpasupplicant
+wireless-regdb
+
+# CPU microcode (firmware-linux recommends) and the Wi-Fi/GPU/audio firmware
+# common on the target laptops (Dell Latitude E6440 class). Not every vendor's
+# blob ships; add the firmware-* package for your hardware here if needed.
+intel-microcode
+amd64-microcode
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-intel-graphics
+firmware-intel-misc
+firmware-sof-signed
+
+# Audio: UCM/topology profiles modern laptop sound cards need, and realtime
+# scheduling for PipeWire.
+alsa-ucm-conf
+alsa-topology-conf
+rtkit
+
+# Desktop: SVG icon loading for GTK (Adwaita symbolic icons), the native
+# Wayland backend and SVG icons for the Qt apps (Calamares, pavucontrol-qt),
+# colour emoji, battery state, user dirs.
+librsvg2-common
+qt6-wayland
+qt6-svg-plugins
+fonts-noto-color-emoji
+upower
+xdg-user-dirs
+
+# Basic system services and tools people expect to be there.
+systemd-timesyncd
+libnss-systemd
+bash-completion
+psmisc
+zstd
