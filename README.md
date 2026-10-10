@@ -1,4 +1,4 @@
-# LuxenOS( there is an unrelsolved boot issue; don't use)
+# LuxenOS ( there is an unrelsolved boot issue; don't use)
 
 A free, open-source Linux desktop for x86_64 laptops that runs real Android
 apps natively (Waydroid), with a translucent "liquid glass" Sway desktop.
