@@ -8,10 +8,11 @@ name: Draft LuxenOS release
 # Build artifacts are kept for 7 days (see build-iso.yml), so draft the
 # release within that window.
 #
-# Assets: the image as one file (luxenos-<variant>-amd64.iso + .sha256) when it
-# fits GitHub's 2 GiB asset cap, or its parts (+ SHA256SUMS.parts and
-# REASSEMBLE.md) when build-iso.yml had to split it. Every asset is checked
-# against its checksum before the release is drafted. The release notes quote
+# Assets: the image always split into parts (luxenos-<variant>-amd64.iso.partNN),
+# plus luxenos-<variant>-amd64.iso.sha256 (digest of the whole image),
+# SHA256SUMS.parts and REASSEMBLE.md. If build-iso.yml left the image whole
+# (it only splits past the 2 GiB asset cap), it is split here. Every asset is
+# checked against its checksum before the release is drafted. The release notes quote
 # the installer's disk/RAM requirements from the welcome.conf of the commit
 # the image was built from, so they cannot drift from what Calamares checks.
 on:
@@ -85,25 +86,20 @@ jobs:
           gh run download "$BUILD_RUN" -n "$ARTIFACT" -D dist
           ls -lh dist
 
-      # Upload exactly the files that make up the image, verified, and refuse
-      # anything unexpected instead of publishing it.
-      - name: Verify the release assets
+      # The release always ships the image split, whether or not build-iso.yml
+      # already split it: the parts, the digest of the whole image, the
+      # per-part digests and REASSEMBLE.md. Everything is verified, and anything
+      # unexpected in the artifact is refused instead of published.
+      - name: Split and verify the release assets
         run: |
           set -eu
           cd dist
           name="luxenos-$VARIANT-amd64.iso"
           [ -f "$name.sha256" ] || { echo "missing $name.sha256"; exit 1; }
           if [ -f "$name" ]; then
-            sha256sum -c "$name.sha256"
             expected="$name $name.sha256"
           elif ls "$name".part[0-9][0-9] >/dev/null 2>&1; then
             [ -f SHA256SUMS.parts ] || { echo "split image without SHA256SUMS.parts"; exit 1; }
-            [ -f REASSEMBLE.md ] || { echo "split image without REASSEMBLE.md"; exit 1; }
-            sha256sum -c SHA256SUMS.parts
-            # The recorded digest is of the whole image: reassemble to check it.
-            whole=$(cat "$name".part[0-9][0-9] | sha256sum | awk '{print $1}')
-            [ "$whole" = "$(awk '{print $1}' "$name.sha256")" ] \
-              || { echo "reassembled image does not match $name.sha256"; exit 1; }
             expected="$(ls "$name".part[0-9][0-9] | tr '\n' ' ')$name.sha256 SHA256SUMS.parts REASSEMBLE.md"
           else
             echo "neither $name nor its parts are in the artifact"; exit 1
@@ -114,7 +110,52 @@ jobs:
               *) echo "unexpected file in the artifact: $f"; exit 1 ;;
             esac
           done
-          echo "assets: $expected"
+
+          if [ -f "$name" ]; then
+            sha256sum -c "$name.sha256"
+            # At most 1900 MiB per part (build-iso.yml's size, under GitHub's
+            # 2 GiB asset cap), and at least two parts even for a small image.
+            # Deliberately NOT "$name.parts.sha256": that name is matched by
+            # the "$name.part*" glob used to reassemble.
+            size=$(stat -c%s "$name")
+            part=$(( (size + 1) / 2 ))
+            [ "$part" -le 1992294400 ] || part=1992294400
+            split -b "$part" -d "$name" "$name.part"
+            sha256sum "$name".part[0-9][0-9] > SHA256SUMS.parts
+            rm -f "$name"
+          fi
+          sha256sum -c SHA256SUMS.parts
+          # The recorded digest is of the whole image: reassemble to check it.
+          whole=$(cat "$name".part[0-9][0-9] | sha256sum | awk '{print $1}')
+          [ "$whole" = "$(awk '{print $1}' "$name.sha256")" ] \
+            || { echo "reassembled image does not match $name.sha256"; exit 1; }
+
+          # Windows has no glob for this: spell out "part00 + part01 + ...".
+          parts_plus=$(ls "$name".part[0-9][0-9] | sed ':a;N;$!ba;s/\n/ + /g')
+          printf '%s\n' \
+            "# LuxenOS $VARIANT image" \
+            "" \
+            "The image ships in parts (GitHub caps a release asset at 2 GiB)." \
+            "Download every \`$name.partNN\` file plus \`$name.sha256\`" \
+            "and \`SHA256SUMS.parts\` into one folder." \
+            "" \
+            "Check the downloads:" \
+            "" \
+            "    sha256sum -c SHA256SUMS.parts" \
+            "" \
+            "Reassemble (Linux/macOS):" \
+            "" \
+            "    cat $name.part[0-9][0-9] > $name" \
+            "" \
+            "Reassemble (Windows, Command Prompt):" \
+            "" \
+            "    copy /b $parts_plus $name" \
+            "" \
+            "Verify the reassembled image against the digest of the original:" \
+            "" \
+            "    sha256sum -c $name.sha256" \
+            > REASSEMBLE.md
+          ls -lh
 
       # Only the installer's requirements file is needed, at the build commit.
       - uses: actions/checkout@v4
@@ -132,19 +173,8 @@ jobs:
         run: |
           set -eu
           name="luxenos-$VARIANT-amd64.iso"
-          if [ -f dist/REASSEMBLE.md ]; then
-            cp dist/REASSEMBLE.md notes.md
-            size=$(cat dist/"$name".part[0-9][0-9] | wc -c)
-          else
-            printf '%s\n' \
-              "# LuxenOS $VARIANT image" \
-              "" \
-              "Verify the download:" \
-              "" \
-              "    sha256sum -c $name.sha256" \
-              > notes.md
-            size=$(stat -c%s "dist/$name")
-          fi
+          cp dist/REASSEMBLE.md notes.md
+          size=$(cat dist/"$name".part[0-9][0-9] | wc -c)
 
           welcome=src/config/includes.chroot/etc/calamares/modules/welcome.conf
           if [ -f "$welcome" ]; then
