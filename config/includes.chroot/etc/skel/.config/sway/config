@@ -65,7 +65,7 @@ bindsym $mod+Shift+a exec foot -e luxenos-setup-android
 bindsym $mod+Shift+h exec foot -e luxenos-health-check
 
 # Installer (only meaningful when running the live image).
-bindsym $mod+Shift+i exec calamares
+bindsym $mod+Shift+i exec luxenos-installer
 
 # Focus.
 bindsym $mod+Left focus left

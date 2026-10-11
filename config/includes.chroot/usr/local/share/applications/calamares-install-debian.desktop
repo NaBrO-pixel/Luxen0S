@@ -1,0 +1,9 @@
+# Hides calamares-settings-debian's "Install Debian" launcher: it needs xhost
+# (not installed) and an X session; "Install LuxenOS" (calamares.desktop) is
+# the LuxenOS launcher.
+[Desktop Entry]
+Type=Application
+Name=Install Debian
+Exec=calamares-install-debian
+NoDisplay=true
+Hidden=true

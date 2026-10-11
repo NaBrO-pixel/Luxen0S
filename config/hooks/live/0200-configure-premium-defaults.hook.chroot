@@ -49,16 +49,17 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1; then
 fi
 
 # LuxenOS branded GRUB theme, shipped via includes.chroot at
-# /boot/grub/themes/luxenos/theme.txt.
+# /boot/grub/themes/luxenos/theme.txt. /etc/default/grub comes from grub-pc
+# (installer.list.chroot). Only the setting is written here: the image itself
+# has no installed bootloader (running update-grub in the build chroot would
+# probe the build host's disks), Calamares' grubcfg/bootloader jobs generate
+# grub.cfg on the installed system and keep GRUB_THEME.
 if [ -f /boot/grub/themes/luxenos/theme.txt ] && [ -f /etc/default/grub ]; then
     log "Selecting the LuxenOS GRUB theme"
     if grep -q '^GRUB_THEME=' /etc/default/grub; then
         sed -i 's#^GRUB_THEME=.*#GRUB_THEME=/boot/grub/themes/luxenos/theme.txt#' /etc/default/grub
     else
         echo 'GRUB_THEME=/boot/grub/themes/luxenos/theme.txt' >> /etc/default/grub
-    fi
-    if command -v update-grub >/dev/null 2>&1; then
-        update-grub >/dev/null 2>&1 || log "WARNING: update-grub failed after setting GRUB_THEME"
     fi
 fi
 

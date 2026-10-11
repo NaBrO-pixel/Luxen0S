@@ -1,0 +1,198 @@
+#!/bin/sh
+# luxenos-installer - start the Calamares installer with root rights.
+#
+# Calamares has to run as root: it partitions, formats and mounts disks. Run
+# as the ordinary live user it cannot read the disks properly (partitions and
+# free space are missing from the partitioning page) and its welcome page
+# refuses to continue (the "root" requirement in
+# /etc/calamares/modules/welcome.conf). Debian starts it the same way
+# (calamares-install-debian: "pkexec calamares").
+#
+# Used by the installer kiosk (/etc/luxenos-installer/kiosk-sway-config), the
+# "Install LuxenOS" launcher and Super+Shift+I on the desktop.
+#
+# How root is obtained, in order:
+#   1. sudo -n. On the live USB, luxenos-live-access.service writes
+#      /etc/sudoers.d/luxenos-live-installer at boot (live only), which lets
+#      the live user run exactly this script as root without a password;
+#      live-config's own /etc/sudoers.d/live (NOPASSWD: ALL) works too.
+#   2. pkexec. On the live USB the polkit rule written by the same service
+#      allows it without a prompt; anywhere else a polkit agent (started here
+#      if none runs) asks for an administrator password.
+#   3. Neither worked: a visible error (swaynag/zenity/foot) plus a log entry
+#      (journal tag "luxenos-installer" and ~/.cache/luxenos-installer.log),
+#      never a silent blank screen.
+#
+# No environment variables are carried across sudo/pkexec (sudoers may
+# refuse that). The Wayland socket name is passed as an argument instead;
+# the root side checks it and connects by absolute path, and gets its own
+# XDG_RUNTIME_DIR. A one-time token (marker file in /run/luxenos-installer)
+# proves the root side really started, so a Calamares exit status is never
+# mistaken for an escalation failure.
+#
+# Arguments are internal; anything else is ignored (this script may be
+# allowed through sudo/polkit, so it must not pass arbitrary options to
+# Calamares).
+
+set -u
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+SELF=/usr/local/bin/luxenos-installer
+MARKER_DIR=/run/luxenos-installer
+
+log() {
+    logger -t luxenos-installer -- "$*" 2>/dev/null || true
+    if [ "$(id -u)" -ne 0 ]; then
+        logdir="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}"
+        mkdir -p "$logdir" 2>/dev/null \
+            && printf '%s %s\n' "$(date -Is 2>/dev/null)" "$*" >> "$logdir/luxenos-installer.log" 2>/dev/null
+    fi
+    echo "luxenos-installer: $*" >&2
+}
+
+# ---------------------------------------------------------------- root side
+run_as_root() {
+    token='' wl_name='' x_display=''
+    for arg in "$@"; do
+        case $arg in
+            --token=*)           token=${arg#--token=} ;;
+            --wayland-display=*) wl_name=${arg#--wayland-display=} ;;
+            --display=*)         x_display=${arg#--display=} ;;
+        esac
+    done
+
+    # Who asked for it: sudo and pkexec both say.
+    uid=${SUDO_UID:-${PKEXEC_UID:-}}
+    case $uid in
+        ''|*[!0-9]*) uid='' ;;
+    esac
+
+    case $token in
+        *[!A-Za-z0-9]*) token='' ;;
+    esac
+    if [ -n "$token" ]; then
+        { [ -d "$MARKER_DIR" ] || mkdir -m 0755 "$MARKER_DIR"; } && : > "$MARKER_DIR/$token"
+    fi
+
+    # Wayland: connect by absolute socket path (root may open the user's
+    # socket; its 0700 runtime directory does not stop uid 0).
+    unset WAYLAND_DISPLAY DISPLAY
+    case $wl_name in
+        ''|*[!A-Za-z0-9._-]*) wl_name='' ;;
+    esac
+    if [ -n "$uid" ] && [ -n "$wl_name" ] && [ -S "/run/user/$uid/$wl_name" ]; then
+        export WAYLAND_DISPLAY="/run/user/$uid/$wl_name"
+        export QT_QPA_PLATFORM=wayland
+    else
+        case $x_display in
+            :[0-9]*) case ${x_display#:} in *[!0-9.]*) x_display='' ;; esac ;;
+            *) x_display='' ;;
+        esac
+        if [ -n "$x_display" ]; then
+            export DISPLAY="$x_display"
+            export QT_QPA_PLATFORM=xcb
+        fi
+        log "no usable Wayland socket (uid=$uid name=$wl_name); falling back to ${x_display:-Qt default}"
+    fi
+    # A runtime directory root owns (Qt rejects one owned by another user).
+    [ -d /run/user/0 ] || mkdir -m 0700 /run/user/0 2>/dev/null
+    export XDG_RUNTIME_DIR=/run/user/0
+    export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway
+
+    # pkexec clears the locale; live-config writes the chosen one here.
+    if [ -z "${LANG:-}" ] && [ -r /etc/default/locale ]; then
+        # shellcheck disable=SC1091
+        . /etc/default/locale
+        export LANG
+    fi
+
+    # live-boot writes an /etc/fstab for the live system (overlay root etc.)
+    # that confuses Calamares' partitioning. Debian's calamares-install-debian
+    # moves it aside while the installer runs for the same reason.
+    moved_fstab=no
+    if grep -qw 'boot=live' /proc/cmdline 2>/dev/null \
+        && [ -e /etc/fstab ] && [ ! -e /etc/fstab.orig.calamares ]; then
+        mv /etc/fstab /etc/fstab.orig.calamares && moved_fstab=yes
+    fi
+
+    log "starting Calamares as root for uid ${uid:-?} (QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-default})"
+    calamares
+    status=$?
+
+    if [ "$moved_fstab" = yes ] && [ ! -e /etc/fstab ]; then
+        mv /etc/fstab.orig.calamares /etc/fstab
+    fi
+    exit "$status"
+}
+
+if [ "$(id -u)" -eq 0 ]; then
+    run_as_root "$@"
+fi
+
+# ---------------------------------------------------------------- user side
+token=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -dc 'a-f0-9')
+[ -n "$token" ] || token="t$$$(date +%s)"
+
+wl_name=${WAYLAND_DISPLAY:-}
+wl_name=${wl_name##*/}
+set -- "--token=$token" "--wayland-display=$wl_name" "--display=${DISPLAY:-}"
+
+# Runs "$@" (an escalation command line) and waits for it. Returns 0 if the
+# root side started (its marker for our token exists; Calamares' own exit
+# status is then in $status), 1 if the escalation itself failed. The marker
+# is left in place (tiny file on the /run tmpfs) so even a Calamares that
+# exits immediately is told apart from a refused sudo/pkexec.
+attempt() {
+    "$@"
+    status=$?
+    [ -e "$MARKER_DIR/$token" ]
+}
+
+errors=''
+
+# 1. sudo (non-interactive; only if policy allows this exact command).
+if command -v sudo >/dev/null 2>&1; then
+    if sudo -n -l "$SELF" >/dev/null 2>&1; then
+        if attempt sudo -n "$SELF" "$@"; then exit "$status"; fi
+        errors="${errors}sudo: allowed but the installer did not start (status $status). "
+    else
+        errors="${errors}sudo: not allowed without a password. "
+    fi
+else
+    errors="${errors}sudo: not installed. "
+fi
+
+# 2. pkexec (needs a polkit rule or a running authentication agent).
+if command -v pkexec >/dev/null 2>&1; then
+    if command -v luxenos-polkit-agent >/dev/null 2>&1 \
+        && ! pgrep -f 'polkit.*authentication-agent|lxpolkit' >/dev/null 2>&1; then
+        (setsid luxenos-polkit-agent >/dev/null 2>&1 &)
+        sleep 1
+    fi
+    if attempt pkexec "$SELF" "$@"; then exit "$status"; fi
+    case $status in
+        126) errors="${errors}pkexec: not authorized or dismissed. " ;;
+        127) errors="${errors}pkexec: authentication failed (no polkit agent?). " ;;
+        *)   errors="${errors}pkexec: failed (status $status). " ;;
+    esac
+else
+    errors="${errors}pkexec: not installed. "
+fi
+
+# 3. Nothing worked: say so where the user can see it.
+log "could not get administrator rights for the installer: $errors"
+msg="The LuxenOS installer could not get administrator (root) rights, so it cannot partition the disk. ${errors}Reboot the USB and try again, or open a terminal (Super+Return) and run: sudo luxenos-installer. Details: journalctl -t luxenos-installer"
+
+if [ -n "${SWAYSOCK:-}" ] && command -v swaynag >/dev/null 2>&1; then
+    swaynag -t error -m "$msg" -B "Retry" "$SELF" -B "Open terminal" "foot" >/dev/null 2>&1 && exit 1
+fi
+if command -v zenity >/dev/null 2>&1 && zenity --error --no-markup --width=520 --text="$msg" >/dev/null 2>&1; then
+    exit 1
+fi
+if command -v foot >/dev/null 2>&1; then
+    # shellcheck disable=SC2016 # $1 is expanded by the inner sh
+    foot sh -c 'printf "%s\n\nPress Enter to close.\n" "$1"; read -r _' sh "$msg" >/dev/null 2>&1
+fi
+exit 1

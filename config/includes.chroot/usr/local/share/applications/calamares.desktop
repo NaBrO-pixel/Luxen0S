@@ -1,0 +1,16 @@
+# LuxenOS override of the "Install System" launcher from the calamares package
+# (same desktop-file ID, and /usr/local/share comes first in XDG_DATA_DIRS).
+# Debian's runs "pkexec calamares", which drops the Wayland environment, so
+# Calamares cannot open a window under Sway; luxenos-installer passes it on.
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install LuxenOS
+GenericName=System Installer
+Comment=Install LuxenOS to this computer's disk
+Exec=luxenos-installer
+Icon=calamares
+Terminal=false
+Categories=Qt;System;
+Keywords=calamares;system;install;installer;
+StartupWMClass=calamares

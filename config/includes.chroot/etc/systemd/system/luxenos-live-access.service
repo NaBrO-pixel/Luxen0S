@@ -1,0 +1,19 @@
+# Live USB only: lets the live user start the installer as root
+# (see /usr/libexec/luxenos/luxenos-live-access). Enabled by
+# config/hooks/live/0150-installer-kiosk.hook.chroot; removed from the
+# installed system by Calamares' cleanup job.
+[Unit]
+Description=LuxenOS live USB: allow the live user to start the installer as root
+ConditionKernelCommandLine=boot=live
+ConditionPathIsDirectory=/run/live
+DefaultDependencies=no
+After=local-fs.target
+Before=getty@tty1.service systemd-user-sessions.service multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/luxenos/luxenos-live-access
+
+[Install]
+WantedBy=multi-user.target
