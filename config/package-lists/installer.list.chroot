@@ -4,13 +4,31 @@
 # try-it-first live image.
 calamares
 calamares-settings-debian
-qml-module-qtquick2
-qml-module-qtquick-controls2
-qml-module-qtquick-layouts
-qml-module-qtgraphicaleffects
+# Trixie's Calamares is a Qt 6 build: the branding slideshow (show.qml,
+# "import QtQuick") needs the Qt 6 QML modules. calamares-settings-debian
+# still pulls in the Qt 5 ones (qml-module-qtquick2, -window2) itself.
+qml6-module-qtquick
+qml6-module-qtquick-window
 parted
 gparted
 dosfstools
 squashfs-tools
 cryptsetup
 cryptsetup-initramfs
+
+# Bootloader for the INSTALLED system. Calamares' "bootloader" job runs
+# grub-install inside the copied root filesystem, so GRUB must be part of the
+# image: live-build only installs its own GRUB/syslinux packages temporarily
+# for the ISO's boot menu and builds the squashfs before that, so none of
+# them end up in the installed system. Debian's own Calamares setup instead
+# installs grub-pc or grub-efi from the ISO's package pool at install time
+# (bootloader-config job); LuxenOS has no pool and is built without apt
+# indices, so both are shipped:
+#   grub-pc             BIOS installs (grub-bios-setup, i386-pc modules)
+#   grub-efi-amd64-bin  UEFI installs (x86_64-efi modules; grub-pc and the
+#                       grub-efi-amd64 metapackage conflict, the -bin does not)
+#   efibootmgr          UEFI boot entries
+# os-prober comes with calamares (Depends).
+grub-pc
+grub-efi-amd64-bin
+efibootmgr

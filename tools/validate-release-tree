@@ -103,6 +103,8 @@ for script in \
     config/includes.chroot/usr/local/bin/luxenos-network \
     config/includes.chroot/usr/local/bin/luxenos-lock \
     config/includes.chroot/usr/local/bin/luxenos-setup-android \
+    config/includes.chroot/usr/local/bin/luxenos-installer \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-live-access \
     config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root
 do
     check_executable "$script"
@@ -180,6 +182,39 @@ fi
 check_file config/includes.chroot/etc/luxenos-installer/kiosk-sway-config
 check_file config/includes.chroot/etc/calamares/branding/luxenos/branding.desc
 check_file config/includes.chroot/etc/calamares/settings.conf
+# Calamares must be started as root (via luxenos-installer), and the installed
+# system needs GRUB inside the image for Calamares' bootloader job.
+if grep -qE '^ *(exec|bindsym .* exec) +calamares *$' \
+    config/includes.chroot/etc/luxenos-installer/kiosk-sway-config \
+    config/includes.chroot/etc/skel/.config/sway/config; then
+    fail "Sway config starts calamares directly (unprivileged); use luxenos-installer"
+fi
+# Live-only root access for the installer: the service must stay conditional
+# on a live boot, be enabled by the kiosk hook, and be removed from the
+# installed system by the Calamares cleanup job.
+live_unit=config/includes.chroot/etc/systemd/system/luxenos-live-access.service
+check_file "$live_unit"
+grep -qx 'ConditionKernelCommandLine=boot=live' "$live_unit" \
+    || fail "$live_unit must only run on a live boot (ConditionKernelCommandLine=boot=live)"
+grep -q 'multi-user.target.wants/luxenos-live-access.service' \
+    config/hooks/live/0150-installer-kiosk.hook.chroot \
+    || fail "0150-installer-kiosk hook does not enable luxenos-live-access.service"
+for path in /etc/systemd/system/luxenos-live-access.service \
+    /etc/systemd/system/multi-user.target.wants/luxenos-live-access.service \
+    /usr/libexec/luxenos/luxenos-live-access \
+    /etc/sudoers.d/luxenos-live-installer \
+    /etc/polkit-1/rules.d/49-luxenos-live-installer.rules; do
+    grep -q -- "$path" config/includes.chroot/etc/calamares/modules/shellprocess-luxenos-cleanup.conf \
+        || fail "Calamares cleanup does not remove $path from the installed system"
+done
+# Nothing that grants root may be shipped statically in the image.
+if [ -e config/includes.chroot/etc/sudoers.d ] || [ -e config/includes.chroot/etc/polkit-1/rules.d ]; then
+    fail "config/includes.chroot must not ship sudoers.d / polkit rules (they would be copied to installed systems)"
+fi
+for pkg in grub-pc grub-efi-amd64-bin; do
+    grep -qx "$pkg" config/package-lists/installer.list.chroot \
+        || fail "$pkg missing from installer.list.chroot (Calamares bootloader job needs it)"
+done
 
 # Branding
 check_file config/includes.chroot/usr/share/backgrounds/luxenos/wallpaper.png

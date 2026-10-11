@@ -1,0 +1,79 @@
+#!/bin/sh
+# luxenos-live-access - live USB only: let the live user start the installer
+# (/usr/local/bin/luxenos-installer) as root without a password.
+#
+# Run at boot by luxenos-live-access.service, before tty1 autologin. Writes,
+# into the live system's RAM overlay only:
+#   /etc/sudoers.d/luxenos-live-installer     sudo rule for that one command
+#   /etc/polkit-1/rules.d/49-luxenos-live-installer.rules
+#                                             the same for pkexec
+# LuxenOS does not rely on live-config's /etc/sudoers.d/live for this.
+#
+# Why this cannot reach an installed system: Calamares' unpackfs copies the
+# read-only squashfs, not the live overlay these files are written to; the
+# service only runs with boot=live on the kernel command line AND live-boot's
+# /run/live present; and Calamares' cleanup job deletes this script, the unit
+# and its enablement link (and, defensively, both generated files) from the
+# installed system (etc/calamares/modules/shellprocess-luxenos-cleanup.conf).
+
+set -eu
+
+INSTALLER=/usr/local/bin/luxenos-installer
+SUDOERS=/etc/sudoers.d/luxenos-live-installer
+RULE=/etc/polkit-1/rules.d/49-luxenos-live-installer.rules
+
+log() { echo "luxenos-live-access: $*" >&2; }
+
+if ! grep -qw 'boot=live' /proc/cmdline 2>/dev/null || [ ! -d /run/live ]; then
+    log "not a live boot; nothing to do"
+    exit 0
+fi
+
+# Live user name: live-config's username= boot parameter, else the build-time
+# name written by config/hooks/live/0150-installer-kiosk.hook.chroot.
+user=$(cat /etc/luxenos-installer/live-username 2>/dev/null || echo user)
+set -f  # split the command line into words, never glob them
+# shellcheck disable=SC2013
+for p in $(cat /proc/cmdline); do
+    case $p in
+        username=*|live-config.username=*) user=${p#*username=} ;;
+    esac
+done
+set +f
+case $user in
+    root|''|-*|*[!a-z0-9_-]*)
+        log "ERROR: refusing live user name '$user'"
+        exit 1
+        ;;
+esac
+
+# sudo: exactly the installer, as root, no password. Written under a name
+# sudo ignores (contains a dot), checked, then renamed into place.
+mkdir -p /etc/sudoers.d
+tmp=$(mktemp /etc/sudoers.d/.luxenos-live-installer.XXXXXX)
+printf '# Live USB only, written at boot by luxenos-live-access.\n%s ALL=(root) NOPASSWD: %s\n' \
+    "$user" "$INSTALLER" > "$tmp"
+chmod 0440 "$tmp"
+if command -v visudo >/dev/null 2>&1 && ! visudo -cqf "$tmp"; then
+    rm -f "$tmp"
+    log "ERROR: generated sudoers rule failed visudo -c"
+else
+    mv -f "$tmp" "$SUDOERS"
+    log "sudo rule for '$user' -> $INSTALLER installed"
+fi
+
+# polkit: pkexec of exactly the installer, for the live user's local session.
+mkdir -p /etc/polkit-1/rules.d
+cat > "$RULE.tmp" <<RULES
+// Live USB only, written at boot by luxenos-live-access.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        action.lookup("program") == "$INSTALLER" &&
+        subject.user == "$user" && subject.local) {
+        return polkit.Result.YES;
+    }
+});
+RULES
+chmod 0644 "$RULE.tmp"
+mv -f "$RULE.tmp" "$RULE"
+log "polkit rule for '$user' -> $INSTALLER installed"

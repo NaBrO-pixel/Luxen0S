@@ -141,10 +141,16 @@ relaunch the installer. To try the full desktop from the USB instead, add
 GRUB menu); changes made there are lost at shutdown.
 
 **2. Installer (Calamares).**
-Launched by the kiosk session. Its sequence
+Launched by the kiosk session through `luxenos-installer`, which starts
+Calamares as root: on the live USB `luxenos-live-access.service` lets the
+live user run exactly that command through `sudo`/`pkexec` without a
+password (live boots only; removed from the installed system), elsewhere
+`pkexec` asks for an administrator password. If it cannot get root it shows
+an error instead of an empty screen (`journalctl -t luxenos-installer`). Its sequence
 (`config/includes.chroot/etc/calamares/settings.conf`) partitions the disk,
 unpacks this same root filesystem (`unpackfs`), creates your account
-(`users`), installs the bootloader, then converts the copy into a normal
+(`users`), installs GRUB (`grub-pc` for BIOS and `grub-efi-amd64-bin` for
+UEFI are shipped in the image for this), then converts the copy into a normal
 system: `removeuser` deletes the live account and a `shellprocess` job purges
 `live-boot`/`live-config`, rebuilds the initramfs, and deletes the kiosk
 files (`shellprocess-luxenos-cleanup.conf`). There is no display manager

@@ -9,6 +9,11 @@
 #     /etc/luxenos-installer/kiosk-sway-config when the kernel command line
 #     contains boot=live (and not luxenos.session=desktop). An installed
 #     system has no boot=live, so it starts the normal desktop instead.
+#   * luxenos-live-access.service (enabled here): at live boot, before the
+#     autologin, it lets the live user run /usr/local/bin/luxenos-installer as
+#     root through sudo and pkexec, so Calamares always gets root without
+#     depending on live-config's sudo component. See
+#     /usr/libexec/luxenos/luxenos-live-access.
 #
 # Both live-only pieces are also removed from the installed system by the
 # Calamares shellprocess job (etc/calamares/modules/shellprocess-luxenos-cleanup.conf).
@@ -29,7 +34,9 @@ case $LIVE_USERNAME in
         ;;
 esac
 
-for f in /etc/luxenos-installer/kiosk-sway-config /etc/profile.d/luxenos-session.sh; do
+for f in /etc/luxenos-installer/kiosk-sway-config /etc/profile.d/luxenos-session.sh \
+    /usr/local/bin/luxenos-installer /usr/libexec/luxenos/luxenos-live-access \
+    /etc/systemd/system/luxenos-live-access.service; do
     if [ ! -r "$f" ]; then
         log "ERROR: $f is missing (expected from config/includes.chroot)"
         exit 1
@@ -43,5 +50,14 @@ cat > /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf << UNIT
 ExecStart=
 ExecStart=-/sbin/agetty --autologin ${LIVE_USERNAME} --noclear %I \$TERM
 UNIT
+
+# Build-time live user name for luxenos-live-access (a username= boot
+# parameter overrides it).
+printf '%s\n' "$LIVE_USERNAME" > /etc/luxenos-installer/live-username
+
+log "Enabling luxenos-live-access.service (installer root access, live boot only)"
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sf /etc/systemd/system/luxenos-live-access.service \
+    /etc/systemd/system/multi-user.target.wants/luxenos-live-access.service
 
 log "Live boot will go straight to the Calamares installer kiosk"
