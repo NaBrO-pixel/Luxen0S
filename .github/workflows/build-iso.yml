@@ -8,7 +8,7 @@ on:
       variant:
         description: 'Which image to build'
         type: choice
-        options: [installer, live]
+        options: [installer, live, traditional]
         default: installer
         required: true
 
@@ -38,6 +38,8 @@ jobs:
       # live-build runs in a Debian 13 container (auto/config needs live-build 5,
       # which ubuntu-latest does not have) and needs --privileged for the
       # mount/chroot/loop operations a live image build performs.
+      # wget: live-build downloads the Debian installer with it (traditional
+      # variant); it refuses to start that step without it on the host.
       - name: Build the ISO
         env:
           VARIANT: ${{ inputs.variant }}
@@ -48,7 +50,7 @@ jobs:
             debian:trixie sh -c '
               set -eu
               apt-get update
-              apt-get install -y --no-install-recommends live-build curl ca-certificates
+              apt-get install -y --no-install-recommends live-build curl wget ca-certificates
               lb config
               lb build
             '

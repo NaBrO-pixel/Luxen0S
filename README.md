@@ -15,9 +15,12 @@ configuration and glass theme, the Android integration and its first-boot
 setup flow, the installer session, the branding and boot behavior, and the
 hardening layered on top of Debian.
 
-The build produces one **live/installer hybrid ISO** (`live-build`
-`iso-hybrid`). See [How LuxenOS boots](#how-luxenos-boots) for exactly what
-happens in the live session, in the installer, and on the installed system.
+The build produces an `iso-hybrid` ISO in one of three variants: two
+**live/installer hybrids** (`installer`, the default, and `live`) and a
+**traditional, non-live installer** (`traditional`) that boots the Debian
+installer straight from the USB stick, with no live session. See
+[How LuxenOS boots](#how-luxenos-boots) for exactly what happens in the live
+session, in each installer, and on the installed system.
 
 ## Core functions
 
@@ -111,6 +114,8 @@ luxenos-glass reset                   # drop your overrides
 Calamares, with LuxenOS branding
 (`config/includes.chroot/etc/calamares/branding/luxenos/`) and support for
 full-disk LUKS encryption. The live session boots straight into it; see below.
+The `traditional` image uses the Debian installer instead, without a live
+session (see [Traditional image](#traditional-image-no-live-session)).
 
 ### Hardening
 AppArmor with real profile packages (not just the empty service), UFW
@@ -126,7 +131,9 @@ the installed system exists only after Calamares has copied it to disk.
 
 The steps below describe the default `installer` image. A `live` image
 (`VARIANT=live`, see [Image variants](#image-variants)) is identical except
-that step 1 starts the full Sway desktop instead of the installer kiosk.
+that step 1 starts the full Sway desktop instead of the installer kiosk. The
+`traditional` image skips the live session entirely; see
+[Traditional image](#traditional-image-no-live-session).
 
 **1. Live environment (booting the USB without installing).**
 The kernel command line contains `boot=live`, so `live-boot` mounts the
@@ -151,10 +158,12 @@ an error instead of an empty screen (`journalctl -t luxenos-installer`). Its seq
 unpacks this same root filesystem (`unpackfs`), creates your account
 (`users`), installs GRUB (`grub-pc` for BIOS and `grub-efi-amd64-bin` for
 UEFI are shipped in the image for this), then converts the copy into a normal
-system: `removeuser` deletes the live account and a `shellprocess` job purges
-`live-boot`/`live-config`, rebuilds the initramfs, and deletes the kiosk
-files (`shellprocess-luxenos-cleanup.conf`). There is no display manager
-job because LuxenOS has no display manager.
+system: `removeuser` deletes the live account and a `shellprocess` job
+(`shellprocess-luxenos-cleanup.conf`) runs
+`/usr/libexec/luxenos/luxenos-finish-install`, which purges
+`live-boot`/`live-config`, deletes the kiosk files and the live-only root
+access, records the BIOS GRUB disk, and rebuilds the initramfs. There is no
+display manager job because LuxenOS has no display manager.
 
 **3. Installed system.**
 No `boot=live`, no kiosk. You log in at the tty1 console;
@@ -168,6 +177,35 @@ installed system.
 
 The installer-to-installed conversion (steps 2-3) has not been exercised in a
 real install yet; see "Known limitations".
+
+### Traditional image (no live session)
+
+`VARIANT=traditional` builds a conventional install disc. Nothing runs from
+the USB stick except the installer itself:
+
+1. **Boot menu.** BIOS (syslinux) and UEFI (GRUB) both open on
+   **Start installer**, followed by *Advanced install options* (graphical,
+   text, expert, rescue, dark theme, speech synthesis) and *Utilities*. There
+   are no "Live system" entries: `config/hooks/live/0900-traditional-boot-menu.hook.binary`
+   removes them from the generated menus (and fails the build if it cannot).
+2. **Debian installer (d-i).** live-build's `--debian-installer live` mode:
+   d-i's own kernel and initrd boot, and its *live-installer* step copies the
+   LuxenOS root filesystem (the same `filesystem.squashfs` the live images
+   boot) to disk instead of fetching packages. You choose language, keyboard,
+   network, partitioning (guided, LVM, or encrypted LVM) and your account as on
+   any Debian install. `config/includes.installer/preseed.cfg` (embedded in
+   d-i's initrd) answers only what LuxenOS changes: no tasksel (so Debian's
+   GNOME task is not added on top), no root password (your account gets
+   sudo), contrib/non-free/non-free-firmware enabled, no leftover `cdrom:`
+   apt source, and a `late_command` that runs the same
+   `luxenos-finish-install` as Calamares.
+3. **Installed system.** Identical to the Calamares install: tty1 login,
+   Sway, the same hardening and Waydroid first-boot service.
+
+Use it when Calamares fails inside the live session, or on hardware where the
+live Sway/kiosk session does not start: d-i needs no graphical session from
+the USB stick (the text installer needs no working GPU driver at all). The
+installer is Debian's, so it is not LuxenOS-branded.
 
 ## How it compares to macOS and Windows
 
@@ -220,11 +258,16 @@ used where a value is missing, and the hook logs the effective image type):
 | `CURL_TIMEOUT` | Per-attempt curl timeout (seconds) | `120` |
 
 Read by `auto/config` (`DISTRIBUTION`, `ARCHITECTURES`, `ARCHIVE_AREAS`,
-`HOSTNAME`, `USERNAME`, `LOCALE`, `TIMEZONE`, mirrors; run `auto/config --help`):
+`HOSTNAME`, `LOCALE`, `TIMEZONE`, mirrors; run `auto/config --help`):
 `BOOTLOADERS` (default `syslinux,grub-efi`), `BOOTAPPEND` (default
-`quiet splash`) and `VARIANT` (`installer` or `live`, default `installer`;
-see [Image variants](#image-variants)). `USERNAME` is the live user and must
-match `etc/calamares/modules/removeuser.conf`.
+`quiet splash`) and `VARIANT` (`installer`, `live` or `traditional`, default `installer`;
+see [Image variants](#image-variants)). The live user is not an environment
+variable: it is the `username:` in
+`config/includes.chroot/etc/calamares/modules/removeuser.conf` (default
+`user`), which `auto/config` and the installer-kiosk hook both read. (It used
+to come from `USERNAME`, which desktop sessions set to the builder's own login
+name, so local builds got a live user Calamares and the tty1 autologin did not
+expect.)
 
 Checksum verification is fail-closed: without `AURORA_STORE_SHA256` (and
 without `LUXENOS_ALLOW_UNPINNED_DOWNLOADS=1`), the build stops rather than
@@ -249,21 +292,26 @@ take 30-90 minutes. `auto/config` uses live-build 5 option names (Debian 13);
 
 `VARIANT` selects which session the image boots into by default:
 
-| `VARIANT` | Boots into | ISO volume label |
-| --- | --- | --- |
-| `installer` (default) | The Calamares installer kiosk | `LUXENOS` |
-| `live` | The full Sway desktop | `LUXENOS-LIVE` |
+| `VARIANT` | Boots into | Live session? | ISO volume label |
+| --- | --- | --- | --- |
+| `installer` (default) | The Calamares installer kiosk | yes | `LUXENOS` |
+| `live` | The full Sway desktop | yes | `LUXENOS-LIVE` |
+| `traditional` | The Debian installer (graphical/text) | **no** | `LUXENOS-INSTALL` |
 
 ```sh
-sudo lb clean --purge && sudo lb config && sudo lb build                  # installer image
-sudo lb clean --purge && sudo VARIANT=live lb config && sudo lb build     # live image
+sudo lb clean --purge && sudo lb config && sudo lb build                         # installer image
+sudo lb clean --purge && sudo VARIANT=live lb config && sudo lb build            # live image
+sudo lb clean --purge && sudo VARIANT=traditional lb config && sudo lb build     # traditional image
 ```
 
-Both images contain the same packages, the same root filesystem and the same
-installer -- only the default session differs. The live image still has
+All three images contain the same packages and the same root filesystem.
+`installer` and `live` differ only in the default session. The live image still has
 Calamares, so you can install from it straight out of the launcher; the
 installer image can be pushed to the desktop by adding `luxenos.session=desktop`
-to the kernel command line (press `e` in the GRUB menu).
+to the kernel command line (press `e` in the GRUB menu). The `traditional`
+image also carries the Debian installer and its package pool (bootloader,
+cryptsetup and firmware `.deb`s d-i installs from the ISO), so it is somewhat
+larger; it has no live session to push anywhere.
 
 Build one variant at a time: `lb config` writes into `config/`, so run
 `lb clean --purge` between variants. The variant is recorded only in the ISO
@@ -308,7 +356,9 @@ sudo dd if=live-image-amd64.hybrid.iso of=/dev/sdX bs=4M status=progress conv=fs
 ```
 
 Replace `/dev/sdX` with the whole USB device, not a partition. Booting from
-the USB starts the installer.
+the USB starts the installer: Calamares in a live session for the `installer`
+image, the Debian installer (no live session) for the `traditional` image.
+The `traditional` image is flashed the same way.
 
 ## First boot
 
@@ -440,7 +490,9 @@ and swap with `free -h`.
 
 - **Not exercised in a real build/install here:** the full ISO build, the
   Calamares live-to-installed conversion (removeuser, purging live-boot,
-  initramfs rebuild), real SwayFX rendering, and Wine's first-run prefix
+  initramfs rebuild), the `traditional` image's Debian-installer install
+  (live-installer copy, preseed, `luxenos-finish-install` late command),
+  real SwayFX rendering, and Wine's first-run prefix
   creation. The scripts and configs behind them were tested in isolation; see
   the verification report that accompanies each change.
 - No Secure Boot / shim.
@@ -453,7 +505,7 @@ and swap with `free -h`.
 ## Project layout
 
 ```text
-auto/config                                            live-build configuration (live/installer hybrid ISO)
+auto/config                                            live-build configuration (VARIANT=installer|live|traditional)
 config/package-lists/desktop.list.chroot                Sway, Waybar, Firefox, desktop apps
 config/package-lists/android.list.chroot               Waydroid prerequisites (Waydroid itself comes from hook 0100)
 config/hooks/live/0100-install-waydroid.hook.chroot    Waydroid + Aurora Store + first-boot service
@@ -465,7 +517,10 @@ config/includes.chroot/etc/sysctl.d/99-luxenos.conf    Kernel hardening settings
 config/includes.chroot/usr/local/bin/                  Helper scripts (luxenos-glass, luxenos-session-init, luxenos-deb-install, luxenos-wine-open, luxenos-setup-android, ...)
 config/includes.chroot/etc/profile.d/luxenos-session.sh Starts Sway on tty1 (installer kiosk in the live session)
 config/includes.chroot/etc/calamares/                  Installer sequence, branding, post-install cleanup
-config/includes.chroot/usr/libexec/luxenos/            Privileged package helper (pkexec only)
+config/includes.chroot/usr/libexec/luxenos/            Privileged package helper (pkexec only), luxenos-finish-install (post-install conversion, both installers)
+config/includes.installer/preseed.cfg                  Debian installer answers + late_command (traditional image)
+config/hooks/live/0900-traditional-boot-menu.hook.binary
+                                                        Removes the live boot entries from the traditional image
 config/includes.chroot/etc/luxenos/                    glass.conf, wine.conf, updater.conf
 config/package-lists/essentials.list.chroot            Recommended packages LuxenOS needs (the build skips Recommends)
 config/package-lists/wine.list.chroot                  Debian Wine packages (32-bit half via hook 0250)

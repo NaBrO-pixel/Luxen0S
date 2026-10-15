@@ -1,0 +1,90 @@
+#!/bin/sh
+# luxenos-finish-install - turn a freshly copied LuxenOS root filesystem into a
+# normal installed system. Runs as root INSIDE the installed target, once, at
+# the end of an installation. Both installers call it:
+#   * Calamares (live USB):           shellprocess@luxenos-cleanup
+#                                     (/etc/calamares/modules/shellprocess-luxenos-cleanup.conf)
+#   * Debian installer (traditional): preseed/late_command
+#                                     (config/includes.installer/preseed.cfg)
+#
+# It:
+#   * removes the live-boot/live-config packages so the installed initramfs
+#     does not try to boot as a live system, then rebuilds the initramfs;
+#   * removes the installer-only kiosk files (the tty1 autologin for the live
+#     user and the kiosk Sway config) and the live-only root access for the
+#     installer (luxenos-live-access: service, its enablement link, the
+#     script, and -- defensively, they live only in the live RAM overlay and
+#     are never copied to disk -- the sudoers/polkit files it writes and
+#     live-config's own);
+#   * drops the build's "never install Recommends" apt setting (auto/config
+#     builds with --apt-recommends false, and live-build leaves that setting
+#     in the image), so apt on the installed system behaves like Debian's;
+#   * on BIOS installs, records the disk GRUB was installed to in debconf
+#     (grub-pc/install_devices), unless the installer already did (the Debian
+#     installer does; Calamares does not). Without it every later grub-pc
+#     upgrade stops with "You must correct your GRUB install devices" (fatal
+#     under unattended-upgrades). UEFI installs keep grub-pc only for its
+#     files; its postinst skips them (no i386-pc core.img).
+#
+# Every step tolerates "already gone", so this cannot fail an otherwise good
+# installation; problems are reported on stderr (the installer's log).
+
+set -u
+
+log() {
+    echo "[LuxenOS finish-install] $*" >&2
+}
+
+if [ "$(id -u)" -ne 0 ]; then
+    log "ERROR: must run as root inside the installed system"
+    exit 1
+fi
+
+log "Removing live-system packages"
+DEBIAN_FRONTEND=noninteractive apt-get -y purge \
+    live-boot live-boot-initramfs-tools live-config live-config-systemd live-tools \
+    || log "WARNING: purging live packages failed (continuing)"
+
+log "Removing installer kiosk files"
+rm -rf /etc/luxenos-installer /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf
+rmdir --ignore-fail-on-non-empty /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
+
+log "Removing live-only installer root access"
+rm -f /etc/systemd/system/luxenos-live-access.service \
+    /etc/systemd/system/multi-user.target.wants/luxenos-live-access.service \
+    /usr/libexec/luxenos/luxenos-live-access \
+    /etc/sudoers.d/luxenos-live-installer \
+    /etc/polkit-1/rules.d/49-luxenos-live-installer.rules \
+    /etc/sudoers.d/live \
+    /usr/share/polkit-1/rules.d/sudo_on_live.rules
+
+log "Restoring Debian's default apt Recommends behaviour"
+rm -f /etc/apt/apt.conf.d/00recommends
+
+if [ ! -d /sys/firmware/efi ] && command -v grub-probe >/dev/null 2>&1; then
+    current=$(debconf-show grub-pc 2>/dev/null | sed -n 's/^[* ]*grub-pc\/install_devices:[[:space:]]*//p')
+    if [ -n "$current" ]; then
+        log "GRUB install disk already recorded: $current"
+    else
+        disk=$(grub-probe -t disk /boot/grub 2>/dev/null || true)
+        dev=$disk
+        # Prefer a stable /dev/disk/by-id name, as Debian's installer does.
+        for l in /dev/disk/by-id/*; do
+            case $l in */wwn-*|*-part*) continue ;; esac
+            [ "$(readlink -f "$l")" = "$disk" ] && dev=$l && break
+        done
+        if [ -n "$dev" ]; then
+            log "Recording GRUB install disk: $dev"
+            echo "grub-pc grub-pc/install_devices multiselect $dev" | debconf-set-selections \
+                || log "WARNING: could not record the GRUB install disk (continuing)"
+        else
+            log "WARNING: could not find the disk GRUB was installed to (continuing)"
+        fi
+    fi
+fi
+
+log "Rebuilding the initramfs"
+update-initramfs -u -k all || log "WARNING: update-initramfs failed (continuing)"
+
+log "Done"
+exit 0
