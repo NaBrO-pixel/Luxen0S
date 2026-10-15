@@ -24,8 +24,11 @@ log() {
     echo "[LuxenOS Installer Kiosk] $*" >&2
 }
 
-# Must match the username passed to live-config (auto/config: USERNAME).
-LIVE_USERNAME="${USERNAME:-user}"
+# Must match the username auto/config passes to live-config. Both read it from
+# removeuser.conf (live-build runs hooks under "env -i", so no build-host
+# variable could reach this hook anyway).
+REMOVEUSER_CONF=/etc/calamares/modules/removeuser.conf
+LIVE_USERNAME=$(sed -n '/^username:/{s/^username:[[:space:]]*//;s/[[:space:]]*#.*//;s/[[:space:]]*$//;p;}' "$REMOVEUSER_CONF" 2>/dev/null | head -n1)
 
 case $LIVE_USERNAME in
     *[!a-z0-9_-]*|'')

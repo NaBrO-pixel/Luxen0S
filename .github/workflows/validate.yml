@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [installer, live]
+        variant: [installer, live, traditional]
     steps:
       - name: Install live-build (Debian 13) and git
         run: apt-get update && apt-get install -y --no-install-recommends live-build git ca-certificates
@@ -97,10 +97,22 @@ jobs:
                 *) echo "live image does not boot the desktop session"; exit 1 ;;
               esac
               ;;
-            installer)
+            installer|traditional)
               case "$append" in
                 *luxenos.session=desktop*)
-                  echo "installer image must not preset the desktop session"; exit 1 ;;
+                  echo "$VARIANT image must not preset the desktop session"; exit 1 ;;
               esac
               ;;
+          esac
+
+      - name: Only the traditional image carries the Debian installer
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -eu
+          di=$(sed -n 's/^LB_DEBIAN_INSTALLER="\(.*\)"$/\1/p' config/binary)
+          echo "$VARIANT: LB_DEBIAN_INSTALLER=$di"
+          case "$VARIANT:$di" in
+            traditional:live|installer:none|live:none) ;;
+            *) echo "unexpected --debian-installer for $VARIANT"; exit 1 ;;
           esac

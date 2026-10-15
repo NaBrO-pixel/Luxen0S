@@ -3,13 +3,16 @@
 # Live Build Configuration Script for LuxenOS
 # A Debian-based desktop OS with native Android app support (Waydroid).
 #
-# The result is a standard live-build "iso-hybrid" image: a live system
-# (squashfs + live-boot/live-config) that boots from USB/DVD on BIOS and UEFI.
-# VARIANT picks which session that image boots into by default: "installer"
-# (the Calamares installer -- what a traditional install disc does, and the
-# default) or "live" (the full Sway desktop). Both images carry the same root
-# filesystem and the same installer; the installer copies that root filesystem
-# to disk. See README.md ("How LuxenOS boots").
+# The result is a standard live-build "iso-hybrid" image that boots from
+# USB/DVD on BIOS and UEFI. VARIANT picks what it boots:
+#   installer    (default) a live system (squashfs + live-boot/live-config)
+#                that starts straight into the Calamares installer
+#   live         the same live system, starting the full Sway desktop
+#   traditional  NOT live: boots the Debian installer (d-i) directly, which
+#                copies the LuxenOS root filesystem to disk. No live session
+#                runs from the USB stick at any point.
+# All three carry the same root filesystem; both installers copy it to disk.
+# See README.md ("How LuxenOS boots").
 #
 # Option names follow live-build 5 (Debian 13 "trixie"): --binary-image,
 # --bootloaders, --bootappend-live. Hostname, live user, locale and timezone
@@ -28,8 +31,20 @@ BOOTAPPEND="${BOOTAPPEND:-quiet splash}"
 BOOTLOADERS="${BOOTLOADERS:-syslinux,grub-efi}"
 HOSTNAME="${HOSTNAME:-luxenos}"
 
-# Default user account created during the build (part of the installed system).
-USERNAME="${USERNAME:-user}"
+# Live session account, created by live-config at boot and deleted again by
+# the Calamares "removeuser" job. Its one definition is removeuser.conf: the
+# installer-kiosk hook (tty1 autologin) reads the same file, so the three can
+# never disagree. Deliberately NOT taken from $USERNAME: desktop sessions
+# export that as the builder's own login name, which made the live user e.g.
+# "alice" while Calamares and the autologin expected "user".
+REMOVEUSER_CONF=config/includes.chroot/etc/calamares/modules/removeuser.conf
+LIVE_USERNAME=$(sed -n '/^username:/{s/^username:[[:space:]]*//;s/[[:space:]]*#.*//;s/[[:space:]]*$//;p;}' "$REMOVEUSER_CONF" 2>/dev/null | head -n1)
+case $LIVE_USERNAME in
+    ''|*[!a-z0-9_-]*)
+        echo "ERROR: no valid 'username:' in $REMOVEUSER_CONF (got '$LIVE_USERNAME')" >&2
+        exit 1
+        ;;
+esac
 
 LOCALE="${LOCALE:-en_US.UTF-8}"
 TIMEZONE="${TIMEZONE:-UTC}"
@@ -38,14 +53,23 @@ MIRROR_BOOTSTRAP="${MIRROR_BOOTSTRAP:-http://deb.debian.org/debian}"
 MIRROR_CHROOT="${MIRROR_CHROOT:-http://deb.debian.org/debian}"
 MIRROR_CHROOT_SECURITY="${MIRROR_CHROOT_SECURITY:-http://security.debian.org/debian-security}"
 
-# Build variant: which session the live image boots into by default.
-#   installer  straight into the Calamares installer (default)
-#   live       straight into the full Sway desktop; the installer is still
-#              installed and can be started from the launcher
-# Nothing else differs between the two images -- same packages, same root
-# filesystem, same installer -- so the choice is only about the default
-# session and the ISO labels below.
+# Build variant: what the image boots into.
+#   installer    live system, straight into the Calamares installer (default)
+#   live         live system, straight into the full Sway desktop; the
+#                installer is still installed and can be started from the
+#                launcher
+#   traditional  no live system: the boot menu starts the Debian installer
+#                (graphical, text and expert modes). Its live-installer step
+#                copies the same LuxenOS squashfs to disk, and
+#                config/includes.installer/preseed.cfg runs the same
+#                post-install cleanup Calamares does. The live boot entries
+#                are removed by config/hooks/live/0900-traditional-boot-menu.hook.binary.
+# The root filesystem is the same in all three; only what boots differs.
 VARIANT="${VARIANT:-installer}"
+
+# --debian-installer: "none" leaves d-i off the ISO; "live" adds d-i set up to
+# install the live squashfs (live-installer) instead of fetching packages.
+DEBIAN_INSTALLER=none
 
 case $VARIANT in
     installer)
@@ -56,8 +80,12 @@ case $VARIANT in
         # kiosk unless this parameter is on the kernel command line.
         LUXENOS_SESSION="luxenos.session=desktop"
         ;;
+    traditional)
+        LUXENOS_SESSION=""
+        DEBIAN_INSTALLER=live
+        ;;
     *)
-        echo "ERROR: VARIANT must be 'live' or 'installer' (got '$VARIANT')" >&2
+        echo "ERROR: VARIANT must be 'installer', 'live' or 'traditional' (got '$VARIANT')" >&2
         exit 1
         ;;
 esac
@@ -66,13 +94,20 @@ esac
 # config/includes.chroot/boot/grub/themes/luxenos/ applies to the installed
 # system. Secure Boot / shim support is not configured here.
 # Labels differ per variant so the two images are told apart on a USB stick.
-if [ "$VARIANT" = live ]; then
-    ISO_APPLICATION="${ISO_APPLICATION:-LuxenOS Live}"
-    ISO_VOLUME="${ISO_VOLUME:-LUXENOS-LIVE}"
-else
-    ISO_APPLICATION="${ISO_APPLICATION:-LuxenOS}"
-    ISO_VOLUME="${ISO_VOLUME:-LUXENOS}"
-fi
+case $VARIANT in
+    live)
+        ISO_APPLICATION="${ISO_APPLICATION:-LuxenOS Live}"
+        ISO_VOLUME="${ISO_VOLUME:-LUXENOS-LIVE}"
+        ;;
+    traditional)
+        ISO_APPLICATION="${ISO_APPLICATION:-LuxenOS Installer}"
+        ISO_VOLUME="${ISO_VOLUME:-LUXENOS-INSTALL}"
+        ;;
+    *)
+        ISO_APPLICATION="${ISO_APPLICATION:-LuxenOS}"
+        ISO_VOLUME="${ISO_VOLUME:-LUXENOS}"
+        ;;
+esac
 
 # ============================================================================
 # Helper Functions
@@ -84,22 +119,26 @@ Usage: $0 [options]
 
 Configure the live-build environment for LuxenOS.
 
-LuxenOS is built as a live/installer hybrid ISO. VARIANT selects which session
-the image boots into: the Calamares installer (VARIANT=installer, the default)
-or the full Sway desktop (VARIANT=live). Either default can be overridden at
-boot by editing the kernel command line: add luxenos.session=desktop for the
-desktop, remove it for the installer. After installation the system boots to a
-tty1 login that starts Sway.
+VARIANT selects what the ISO boots: a live system running the Calamares
+installer (VARIANT=installer, the default), a live system running the full Sway
+desktop (VARIANT=live), or no live system at all -- the Debian installer, booted
+straight from the ISO like a traditional install disc (VARIANT=traditional).
+On the two live images the default session can be overridden at boot by
+editing the kernel command line: add luxenos.session=desktop for the desktop,
+remove it for the installer. After installation the system boots to a tty1
+login that starts Sway.
 
 Environment variables:
-  VARIANT                   Image variant: installer or live (default: installer)
+  VARIANT                   Image variant: installer, live or traditional
+                            (default: installer)
   DISTRIBUTION              Debian release (default: trixie)
   ARCHITECTURES             Target architecture (default: amd64)
   BOOTLOADERS               ISO bootloaders (default: syslinux,grub-efi)
   BOOTAPPEND                Extra kernel parameters (default: quiet splash)
   ARCHIVE_AREAS             Repository areas (default: main contrib non-free non-free-firmware)
   HOSTNAME                  System hostname (default: luxenos)
-  USERNAME                  Default user account (default: user)
+  (The live user is not an environment variable: it is the 'username:' in
+  config/includes.chroot/etc/calamares/modules/removeuser.conf, default: user.)
   LOCALE                    System locale (default: en_US.UTF-8)
   TIMEZONE                  System timezone (default: UTC)
   MIRROR_BOOTSTRAP          Bootstrap mirror URL
@@ -120,6 +159,8 @@ Options:
 Examples:
   $0                     Build the installer image (boots into Calamares)
   VARIANT=live $0        Build the live image (boots into the Sway desktop)
+  VARIANT=traditional $0 Build the traditional image (boots the Debian
+                         installer, no live session)
 USAGE
 }
 
@@ -128,7 +169,7 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     exit 0
 fi
 
-BOOTAPPEND_LIVE="boot=live components $BOOTAPPEND hostname=$HOSTNAME username=$USERNAME locales=$LOCALE timezone=$TIMEZONE"
+BOOTAPPEND_LIVE="boot=live components $BOOTAPPEND hostname=$HOSTNAME username=$LIVE_USERNAME locales=$LOCALE timezone=$TIMEZONE"
 if [ -n "$LUXENOS_SESSION" ]; then
     BOOTAPPEND_LIVE="$BOOTAPPEND_LIVE $LUXENOS_SESSION"
 fi
@@ -150,6 +191,7 @@ lb config noauto \
     --archive-areas "$ARCHIVE_AREAS" \
     --bootappend-live "$BOOTAPPEND_LIVE" \
     --bootloaders "$BOOTLOADERS" \
+    --debian-installer "$DEBIAN_INSTALLER" \
     --mirror-bootstrap "$MIRROR_BOOTSTRAP" \
     --mirror-chroot "$MIRROR_CHROOT" \
     --mirror-chroot-security "$MIRROR_CHROOT_SECURITY" \

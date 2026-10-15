@@ -1,0 +1,89 @@
+#!/bin/sh
+# LuxenOS traditional image: boot the Debian installer, never the live system.
+#
+# Runs in binary/ after live-build has written the boot menus (binary_hooks
+# comes after binary_syslinux, binary_grub_cfg and binary_grub-efi, and before
+# binary_checksums, so the checksums cover the edited files).
+#
+# Only acts when the image carries the Debian installer, which in LuxenOS is
+# exactly VARIANT=traditional (auto/config: --debian-installer live). The
+# installer and live variants are left untouched.
+#
+# What it changes:
+#   * BIOS (isolinux/menu.cfg): drops "include live.cfg", so the menu starts
+#     with "Start installer";
+#   * UEFI (boot/grub/grub.cfg): drops the top-level "Live system ..." entries,
+#     so entry 0 (the default) is "Start installer".
+# The live kernel and squashfs stay on the ISO: the installer copies that
+# squashfs to disk, and Utilities -> "Verify integrity" boots that kernel.
+#
+# Fails the build if the menus do not look as expected, rather than shipping an
+# image that still boots the live system.
+
+set -eu
+
+log() {
+    echo "[LuxenOS traditional boot menu] $*" >&2
+}
+
+di=$(sed -n 's/^LB_DEBIAN_INSTALLER="\(.*\)"$/\1/p' ../config/binary 2>/dev/null || true)
+case ${di:-none} in
+    none|false)
+        log "no Debian installer in this image (LB_DEBIAN_INSTALLER=${di:-unset}): keeping the live boot menu"
+        exit 0
+        ;;
+esac
+
+log "Debian installer image (LB_DEBIAN_INSTALLER=$di): removing live boot entries"
+
+edited=0
+
+# --- BIOS: syslinux/isolinux -------------------------------------------------
+for menu in isolinux/menu.cfg syslinux/menu.cfg; do
+    [ -f "$menu" ] || continue
+    dir=${menu%/menu.cfg}
+    if ! grep -q '^include install.cfg' "$menu" || [ ! -f "$dir/install.cfg" ]; then
+        log "ERROR: $menu has no installer entries (include install.cfg)"
+        exit 1
+    fi
+    sed -i '/^include live\.cfg$/d' "$menu"
+    rm -f "$dir/live.cfg"
+    if grep -q 'live\.cfg' "$menu"; then
+        log "ERROR: $menu still references live.cfg"
+        exit 1
+    fi
+    log "$menu: live entries removed"
+    edited=1
+done
+
+# --- UEFI (and GRUB loopback): grub.cfg ---------------------------------------
+grub=boot/grub/grub.cfg
+if [ -f "$grub" ]; then
+    if ! grep -q 'install_start\.cfg' "$grub" || [ ! -f boot/grub/install_start.cfg ]; then
+        log "ERROR: $grub has no installer entries (install_start.cfg)"
+        exit 1
+    fi
+    # live-build writes each live entry as a top-level block:
+    #   menuentry "Live system ..." {
+    #   ...
+    # }
+    # (the closing brace at column 0). Drop those blocks, nothing else.
+    awk '
+        skip && /^}/            { skip = 0; next }
+        skip                    { next }
+        /^menuentry "Live system/ { skip = 1; next }
+        /^# Autodetect if amd64 is supported$/ { next }
+                                { print }
+    ' "$grub" > "$grub.luxenos" && mv "$grub.luxenos" "$grub"
+    if grep -q '^menuentry "Live system' "$grub"; then
+        log "ERROR: $grub still has live entries"
+        exit 1
+    fi
+    log "$grub: live entries removed"
+    edited=1
+fi
+
+if [ "$edited" -eq 0 ]; then
+    log "ERROR: found no boot menu to edit (isolinux/menu.cfg, boot/grub/grub.cfg)"
+    exit 1
+fi

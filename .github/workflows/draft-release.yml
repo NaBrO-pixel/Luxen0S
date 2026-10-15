@@ -21,7 +21,7 @@ on:
       variant:
         description: 'Which image to release'
         type: choice
-        options: [installer, live]
+        options: [installer, live, traditional]
         default: installer
         required: true
       run_id:

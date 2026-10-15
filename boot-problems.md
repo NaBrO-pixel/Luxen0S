@@ -1,6 +1,6 @@
 # Boot problems
 
-_Last updated: 2026-10-11_
+_Last updated: 2026-10-15_
 
 ## Summary
 The reported installer problem ("Calamares doesn't see all the space on the
@@ -118,6 +118,29 @@ install**. All checks were static, plus inspection of the actual trixie
   - luxenos-live-access in a sandbox: no-op without `boot=live`, honours `username=`, refuses `root` and `a*b`.
   - Not boot-verified: real sudo/polkitd/Sway behaviour, and the unit ordering against autologin.
 
+### 7. Live username came from the builder's `$USERNAME` — status: fixed
+- **Stage:** live boot / installer
+- **Severity:** breaks the installer kiosk on local builds
+- **Where:** `auto/config` (`USERNAME="${USERNAME:-user}"` → `username=$USERNAME` on the live kernel command line), `config/hooks/live/0150-installer-kiosk.hook.chroot` (`${USERNAME:-user}`)
+- **What:** Desktop sessions export `USERNAME` as the login name. Running `auto/config` from such a shell produced `username=<your login name>` (observed on a local build). live-config then created that live user. But:
+  - the tty1 autologin drop-in still named `user`, because live-build runs chroot hooks under `env -i` and the hook never saw `USERNAME`;
+  - Calamares' `removeuser.conf` still said `user`.
+  So the autologin targeted a user that did not exist, and `removeuser` would remove the wrong account. CI builds were unaffected because `USERNAME` is not set there.
+- **Fix:** The `username:` in `config/includes.chroot/etc/calamares/modules/removeuser.conf` is now the only definition. `auto/config` and hook 0150 both read it, and the hook also feeds `/etc/luxenos-installer/live-username` for luxenos-live-access. The environment is no longer read. `auto/config` refuses a missing or invalid name.
+- **Verified by:** `USERNAME=someone lb config` now writes `username=user`. `tools/validate-release-tree` fails if `auto/config` ever takes the name from the environment again (negative-tested with a reverted `auto/config`). Not boot-verified.
+
+### 8. No way to install without booting a live session — status: added (`VARIANT=traditional`)
+- **Stage:** ISO boot / installer
+- **Severity:** workaround for any live-session installer failure
+- **What:** Both images (`installer`, `live`) boot live-boot plus a Sway session from the USB stick and run Calamares inside it, so any problem with live-boot, the RAM overlay, the GPU or the kiosk stops installation.
+- **Fix:** `VARIANT=traditional` (`auto/config`: `--debian-installer live`).
+  - The boot menu starts the Debian installer directly. `config/hooks/live/0900-traditional-boot-menu.hook.binary` removes the "Live system" entries from isolinux and GRUB, and fails the build if it cannot.
+  - d-i's live-installer copies the same squashfs to disk.
+  - `config/includes.installer/preseed.cfg` (embedded in d-i's initrd): no tasksel, sudo for the first user, contrib/non-free(-firmware) enabled, no `cdrom:` apt source, and `late_command` → `luxenos-finish-install`.
+  - The Calamares cleanup job now runs that same script (`config/includes.chroot/usr/libexec/luxenos/luxenos-finish-install`), so both installers convert the system identically. The GRUB `install_devices` step keeps d-i's own answer if one is already recorded.
+  - live-build's `chroot_hacks` empties `/etc/fstab` for this mode, so d-i's partman writes a fresh one.
+- **Verified by:** `lb config` for all three variants (only `traditional` sets `LB_DEBIAN_INSTALLER="live"`). The hook ran against menus generated from live-build 1:20250505+deb13u1's own templates: it removes the live entries on `traditional` and does nothing on `installer`. Not built or boot-verified.
+
 ## Other interesting observations
 - **No partition.conf is a non-issue.** Neither calamares nor calamares-settings-debian ships one, so Calamares' built-in defaults apply (EFI at `/boot/efi`, ext4, swap partition sized from RAM). Debian's live images work the same way. With the default swap choice the root partition is smaller than the disk by the swap size. That is expected, not "missing space".
 - **requiredStorage 10 GiB** (`welcome.conf`) is below Debian's 15 and fine. It only gates the welcome page; it does not limit what the partition page shows.
@@ -144,6 +167,9 @@ cat x/live-config/usr/lib/live/config/0040-sudo                    # NOPASSWD su
 
 # real test (needs root + network): build, then boot in QEMU
 sudo lb clean && ./auto/config && sudo lb build
+# traditional (no live session): sudo lb clean --purge && sudo VARIANT=traditional lb config && sudo lb build
+#   -> boot menu must offer only "Start installer"/advanced/utilities; after
+#      the d-i install, `dpkg -l live-boot` on the target must show it purged.
 qemu-system-x86_64 -enable-kvm -m 4G -cdrom live-image-amd64.hybrid.iso \
   -drive file=disk.qcow2,if=virtio -serial stdio          # BIOS
 # add: -bios /usr/share/ovmf/OVMF.fd                      # UEFI

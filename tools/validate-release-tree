@@ -54,6 +54,8 @@ check_executable config/hooks/live/0200-configure-premium-defaults.hook.chroot
 check_shell_syntax config/hooks/live/0200-configure-premium-defaults.hook.chroot
 check_executable config/hooks/live/0250-install-wine-and-integrations.hook.chroot
 check_shell_syntax config/hooks/live/0250-install-wine-and-integrations.hook.chroot
+check_executable config/hooks/live/0900-traditional-boot-menu.hook.binary
+check_shell_syntax config/hooks/live/0900-traditional-boot-menu.hook.binary
 
 # Desktop / skel configs (what the *installed* system boots into)
 check_file config/includes.chroot/etc/skel/.config/sway/config
@@ -191,7 +193,8 @@ if grep -qE '^ *(exec|bindsym .* exec) +calamares *$' \
 fi
 # Live-only root access for the installer: the service must stay conditional
 # on a live boot, be enabled by the kiosk hook, and be removed from the
-# installed system by the Calamares cleanup job.
+# installed system by luxenos-finish-install (run by the Calamares cleanup job
+# and by the traditional image's Debian installer).
 live_unit=config/includes.chroot/etc/systemd/system/luxenos-live-access.service
 check_file "$live_unit"
 grep -qx 'ConditionKernelCommandLine=boot=live' "$live_unit" \
@@ -204,8 +207,8 @@ for path in /etc/systemd/system/luxenos-live-access.service \
     /usr/libexec/luxenos/luxenos-live-access \
     /etc/sudoers.d/luxenos-live-installer \
     /etc/polkit-1/rules.d/49-luxenos-live-installer.rules; do
-    grep -q -- "$path" config/includes.chroot/etc/calamares/modules/shellprocess-luxenos-cleanup.conf \
-        || fail "Calamares cleanup does not remove $path from the installed system"
+    grep -q -- "$path" config/includes.chroot/usr/libexec/luxenos/luxenos-finish-install \
+        || fail "luxenos-finish-install does not remove $path from the installed system"
 done
 # Nothing that grants root may be shipped statically in the image.
 if [ -e config/includes.chroot/etc/sudoers.d ] || [ -e config/includes.chroot/etc/polkit-1/rules.d ]; then
@@ -216,14 +219,30 @@ for pkg in grub-pc grub-efi-amd64-bin; do
         || fail "$pkg missing from installer.list.chroot (Calamares bootloader job needs it)"
 done
 
+# Post-install conversion shared by Calamares and the Debian installer
+check_executable config/includes.chroot/usr/libexec/luxenos/luxenos-finish-install
+check_shell_syntax config/includes.chroot/usr/libexec/luxenos/luxenos-finish-install
+grep -q '/usr/libexec/luxenos/luxenos-finish-install' \
+    config/includes.chroot/etc/calamares/modules/shellprocess-luxenos-cleanup.conf \
+    || fail "Calamares cleanup job does not run luxenos-finish-install"
+
+# Traditional (Debian installer) image
+check_file config/includes.installer/preseed.cfg
+grep -q '^d-i preseed/late_command string in-target /usr/libexec/luxenos/luxenos-finish-install$' \
+    config/includes.installer/preseed.cfg \
+    || fail "preseed.cfg does not run luxenos-finish-install as its late_command"
+grep -q '^d-i pkgsel/run_tasksel boolean false$' config/includes.installer/preseed.cfg \
+    || fail "preseed.cfg must skip tasksel (it would add Debian's GNOME desktop)"
+
 # Branding
 check_file config/includes.chroot/usr/share/backgrounds/luxenos/wallpaper.png
 check_file config/includes.chroot/usr/share/plymouth/themes/luxenos/luxenos.plymouth
 check_file config/includes.chroot/usr/share/plymouth/themes/luxenos/luxenos.script
 check_file config/includes.chroot/boot/grub/themes/luxenos/theme.txt
 
-# Image variants: both must configure, and only the live variant may preset the
-# desktop session. Uses a stub `lb` so this runs without live-build installed.
+# Image variants: all three must configure, only the live variant may preset
+# the desktop session, and only the traditional variant may carry the Debian
+# installer. Uses a stub `lb` so this runs without live-build installed.
 variant_dir=$(mktemp -d)
 cat > "$variant_dir/lb" <<'STUB'
 #!/bin/sh
@@ -245,18 +264,51 @@ live_append=$(variant_bootappend live) || {
     fail "auto/config produced no boot parameters for VARIANT=live"
 }
 
-case $installer_append in
-    *luxenos.session=desktop*)
+traditional_append=$(variant_bootappend traditional) || {
+    rm -rf "$variant_dir"
+    fail "auto/config produced no boot parameters for VARIANT=traditional"
+}
+
+for append in "$installer_append" "$traditional_append"; do
+    case $append in
+        *luxenos.session=desktop*)
+            rm -rf "$variant_dir"
+            fail "VARIANT=installer/traditional must not preset luxenos.session=desktop"
+            ;;
+    esac
+done
+
+# The stub prints one argument per line, so "--debian-installer" is followed by
+# its value on the next line.
+variant_debian_installer() {
+    VARIANT="$1" PATH="$variant_dir:$PATH" sh auto/config 2>/dev/null \
+        | sed -n '/^--debian-installer$/{n;p;q}'
+}
+for v in installer:none live:none traditional:live; do
+    got=$(variant_debian_installer "${v%%:*}")
+    if [ "$got" != "${v#*:}" ]; then
         rm -rf "$variant_dir"
-        fail "VARIANT=installer must not preset luxenos.session=desktop"
-        ;;
-esac
+        fail "VARIANT=${v%%:*} must configure --debian-installer ${v#*:} (got '${got}')"
+    fi
+done
 
 case $live_append in
     *luxenos.session=desktop*) ;;
     *)
         rm -rf "$variant_dir"
         fail "VARIANT=live must preset luxenos.session=desktop"
+        ;;
+esac
+
+# The live user must come from removeuser.conf, never from the builder's
+# environment (desktop sessions export USERNAME as the builder's login name).
+case $(USERNAME=not-the-live-user VARIANT=installer PATH="$variant_dir:$PATH" sh auto/config 2>/dev/null \
+        | grep -m1 '^boot=live ') in
+    *" username=$(sed -n '/^username:/{s/^username:[[:space:]]*//;s/[[:space:]]*#.*//;s/[[:space:]]*$//;p;}' \
+        config/includes.chroot/etc/calamares/modules/removeuser.conf | head -n1) "*) ;;
+    *)
+        rm -rf "$variant_dir"
+        fail "auto/config's live username does not match removeuser.conf"
         ;;
 esac
 
