@@ -1,5 +1,5 @@
 # LuxenOS
-
+## Don't use see issue #13
 A free, open-source Linux desktop for x86_64 laptops that runs real Android
 apps natively (Waydroid), with a translucent "liquid glass" Sway desktop.
 You boot a USB stick, install with Calamares, and log in to Sway.
