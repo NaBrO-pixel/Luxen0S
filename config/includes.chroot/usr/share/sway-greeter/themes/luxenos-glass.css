@@ -1,0 +1,48 @@
+/* luxenos-glass theme for sway-greeter
+   This reads the same visual tokens LuxenOS uses elsewhere.
+   Keep this small — sway-greeter applies it to the greeter window. */
+
+:root {
+  --bg: #1d2330;
+  --panel: rgba(46,54,80,0.6);
+  --accent: #5e81ac;
+  --text: #e0e6f0;
+  --radius: 12px;
+  --blur: 10px;
+}
+
+body {
+  background: linear-gradient(180deg, var(--bg), #141a26);
+  color: var(--text);
+  font-family: "Inter", "Noto Sans", sans-serif;
+}
+
+.login-card {
+  background: var(--panel);
+  backdrop-filter: blur(var(--blur));
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.03);
+  padding: 28px;
+  width: 420px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+}
+
+.input {
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 12px;
+  border: 1px solid rgba(255,255,255,0.03);
+}
+
+.button {
+  background: linear-gradient(90deg, var(--accent), #7fa5d6);
+  color: #041124;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-top: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
