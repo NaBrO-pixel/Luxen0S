@@ -183,12 +183,12 @@ fi
 
 # 3. Nothing worked: say so where the user can see it.
 log "could not get administrator rights for the installer: $errors"
-msg="The LuxenOS installer could not get administrator (root) rights, so it cannot partition the disk. ${errors}Reboot the USB and try again, or open a terminal (Super+Return) and run: sudo luxenos-installer. Details: journalctl -t luxenos-installer"
+msg="The LuxenOS installer could not obtain administrator (root) rights, so it cannot partition the disk.\n\nWhat to try next:\n  • Retry the installer (this will attempt to get administrator rights again).\n  • Open a terminal (press Super+Return) and run exactly:\n      sudo /usr/local/bin/luxenos-installer\n  • View the installer log file in the live session: ~/.cache/luxenos-installer.log\n  • To collect diagnostic output for support: run\n      journalctl -t luxenos-installer  | tail -n 200\n\nIf the problem persists, reboot the USB and try again."
 
 if [ -n "${SWAYSOCK:-}" ] && command -v swaynag >/dev/null 2>&1; then
     swaynag -t error -m "$msg" -B "Retry" "$SELF" -B "Open terminal" "foot" >/dev/null 2>&1 && exit 1
 fi
-if command -v zenity >/dev/null 2>&1 && zenity --error --no-markup --width=520 --text="$msg" >/dev/null 2>&1; then
+if command -v zenity >/dev/null 2>&1 && zenity --error --no-markup --width=520 --ok-label="Retry" --extra-button="Open terminal" --text="$msg" >/dev/null 2>&1; then
     exit 1
 fi
 if command -v foot >/dev/null 2>&1; then
