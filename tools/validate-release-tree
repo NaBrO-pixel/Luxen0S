@@ -94,6 +94,7 @@ check_file config/includes.chroot/etc/skel/.config/gtk-4.0/gtk.css
 check_file config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy
 check_file config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop
 check_file config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop
+check_file config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop
 check_file config/includes.chroot/usr/share/applications/luxenos-accessibility.desktop
 check_file config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
 check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
@@ -101,6 +102,7 @@ for script in \
     config/includes.chroot/usr/local/bin/luxenos-glass \
     config/includes.chroot/usr/local/bin/luxenos-waybar \
     config/includes.chroot/usr/local/bin/luxenos-controls \
+    config/includes.chroot/usr/local/bin/luxenos-accessibility-settings \
     config/includes.chroot/usr/local/bin/luxenos-polkit-agent \
     config/includes.chroot/usr/local/bin/luxenos-deb-install \
     config/includes.chroot/usr/local/bin/luxenos-wine-open \
