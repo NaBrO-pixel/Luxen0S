@@ -52,6 +52,8 @@ check_executable config/hooks/live/0150-installer-kiosk.hook.chroot
 check_shell_syntax config/hooks/live/0150-installer-kiosk.hook.chroot
 check_executable config/hooks/live/0200-configure-premium-defaults.hook.chroot
 check_shell_syntax config/hooks/live/0200-configure-premium-defaults.hook.chroot
+check_executable config/hooks/live/0200-build-swayfx.hook.chroot
+check_shell_syntax config/hooks/live/0200-build-swayfx.hook.chroot
 check_executable config/hooks/live/0250-install-wine-and-integrations.hook.chroot
 check_shell_syntax config/hooks/live/0250-install-wine-and-integrations.hook.chroot
 check_executable config/hooks/live/0900-traditional-boot-menu.hook.binary
@@ -110,7 +112,9 @@ for script in \
     config/includes.chroot/usr/local/bin/luxenos-setup-android \
     config/includes.chroot/usr/local/bin/luxenos-installer \
     config/includes.chroot/usr/libexec/luxenos/luxenos-live-access \
-    config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root
+    config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root \
+    config/includes.chroot/usr/libexec/luxenos/enable-greetd.sh \
+    config/includes.chroot/usr/local/bin/luxenos-sway-session
 do
     check_executable "$script"
     check_shell_syntax "$script"
@@ -262,6 +266,18 @@ for pkg in grub-pc grub-efi-amd64-bin; do
 done
 
 # Post-install conversion shared by Calamares and the Debian installer
+# Calamares runs this by path, so it must carry the executable bit.
+grep -q '/usr/libexec/luxenos/enable-greetd.sh' \
+    config/includes.chroot/etc/calamares/modules/shellprocess-luxenos-cleanup.conf \
+    || fail "Calamares cleanup job does not run enable-greetd.sh"
+# greetd must launch Sway through the wrapper that sets the software-renderer fallback.
+grep -q 'luxenos-sway-session' config/includes.chroot/etc/greetd/config.toml \
+    || fail "greetd config.toml does not start Sway via luxenos-sway-session"
+grep -q 'luxenos-sway-session' config/includes.chroot/etc/greetd/sway-config \
+    || fail "greetd sway-config does not start wlgreet's session via luxenos-sway-session"
+# The update timer must fire once a day, not once for "daily" and once for 02:00.
+[ "$(grep -c '^OnCalendar=' config/includes.chroot/etc/systemd/system/luxenos-auto-update.timer)" -eq 1 ] \
+    || fail "luxenos-auto-update.timer must have exactly one OnCalendar= line"
 check_executable config/includes.chroot/usr/libexec/luxenos/luxenos-finish-install
 check_shell_syntax config/includes.chroot/usr/libexec/luxenos/luxenos-finish-install
 grep -q '/usr/libexec/luxenos/luxenos-finish-install' \
@@ -378,5 +394,12 @@ else
         fail "merge conflict markers remain"
     fi
 fi
+
+for script in config/includes.chroot/usr/local/bin/luxenos-updater \
+    config/includes.chroot/usr/local/bin/luxenos-update-settings; do
+    if command -v bash >/dev/null 2>&1; then
+        bash -n "$script" || fail "bash syntax error in: $script"
+    fi
+done
 
 echo "LuxenOS release tree is merge-clean and syntax-valid."
