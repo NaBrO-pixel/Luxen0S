@@ -21,6 +21,15 @@ if [ ! -f /etc/greetd/config.toml ]; then
     exit 1
 fi
 
+# wlgreet runs under the dedicated greetd account and needs access to graphics devices.
+if command -v usermod >/dev/null 2>&1; then
+    for group in video render; do
+        if getent group "$group" >/dev/null 2>&1; then
+            usermod -a -G "$group" _greetd
+        fi
+    done
+fi
+
 # --root writes enablement links into the target filesystem without contacting
 # a running systemd manager (which is not available inside the install chroot).
 log "Enabling greetd for the next boot"
