@@ -96,6 +96,7 @@ check_file config/includes.chroot/usr/share/applications/luxenos-deb-install.des
 check_file config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop
 check_file config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop
 check_file config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
 for script in \
     config/includes.chroot/usr/local/bin/luxenos-glass \
     config/includes.chroot/usr/local/bin/luxenos-waybar \
