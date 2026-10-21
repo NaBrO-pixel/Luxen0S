@@ -84,6 +84,8 @@ every key explained). Your overrides: `~/.config/luxenos/glass.conf`, same
 format, wins over the system file. The file is parsed, not sourced; invalid
 values are reported and replaced by safe defaults. Missing files are fine.
 
+**Settings → Accessibility.** Open **Super+C → Settings: Accessibility** to get a graphical Liquid Glass intensity slider (0–100). It adjusts opacity, blur strength, borders, shadows, corner radius, saturation, spacing and animation intensity together; the choice is saved for your user. Blur and rounded window effects require SwayFX; stock Sway uses the readable tinted fallback. The same screen lets you toggle reduced motion.
+
 **Accessibility.** `GLASS_REDUCE_MOTION=yes` sets all transitions to zero
 (bar, launcher, GTK `enable-animations`). Hover and focus colours still change
 instantly, so feedback is kept.
