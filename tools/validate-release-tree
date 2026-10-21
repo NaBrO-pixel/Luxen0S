@@ -186,6 +186,32 @@ for intensity in 0 50 100; do
     [ "$actual" = "$intensity" ] || { rm -rf "$glass_home"; fail "intensity getter returned '$actual' for $intensity"; }
 done
 
+# A configured system-wide intensity must drive the generated theme when no
+# per-user override exists.
+system_glass_conf="$glass_home/system-glass.conf"
+sed 's/^#GLASS_INTENSITY=55$/GLASS_INTENSITY=100/' config/includes.chroot/etc/luxenos/glass.conf > "$system_glass_conf"
+rm -f "$glass_home/.config/luxenos/glass.conf"
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF="$system_glass_conf" \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass apply --files-only >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "system-wide GLASS_INTENSITY default failed"; }
+actual=$(HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF="$system_glass_conf" \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)
+[ "$actual" = 100 ] || { rm -rf "$glass_home"; fail "system intensity getter returned '$actual' instead of 100"; }
+grep -q 'border-radius: 16px' "$glass_home/.config/luxenos/glass/waybar.css" \
+    || { rm -rf "$glass_home"; fail "system intensity did not affect generated corner radius"; }
+
+# Preset selection should replace slider-owned values with its exact preset.
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass intensity 75 >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "Liquid Glass intensity 75 could not be applied"; }
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass preset balanced >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "balanced preset could not be applied after slider"; }
+grep -qx 'GLASS_INTENSITY=55' "$glass_home/.config/luxenos/glass.conf" \
+    || { rm -rf "$glass_home"; fail "balanced preset did not reset slider value"; }
+grep -qx 'GLASS_RADIUS=12' "$glass_home/.config/luxenos/glass.conf" \
+    || { rm -rf "$glass_home"; fail "balanced preset did not restore its radius"; }
+rm -rf "$glass_home"
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
     desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop \
