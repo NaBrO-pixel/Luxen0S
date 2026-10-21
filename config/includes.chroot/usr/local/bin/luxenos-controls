@@ -17,7 +17,7 @@ confirm() {
 
 accessibility_settings() {
     if ! command -v zenity >/dev/null 2>&1; then
-        printf 'Accessibility settings need zenity.\\n' >&2
+        printf 'Accessibility settings need zenity.\n' >&2
         return 1
     fi
     current=$(luxenos-glass get intensity 2>/dev/null || printf '55')
@@ -63,7 +63,7 @@ case $choice in
     "Network & Wi-Fi")          exec luxenos-network ;;
     "Sound")                    exec pavucontrol-qt ;;
     "Appearance (GTK theme)")   exec nwg-look ;;
-    "Settings: Accessibility")  exec sh /usr/local/bin/luxenos-accessibility-settings ;;
+    "Settings: Accessibility")  exec luxenos-controls accessibility ;;
     "Glass: Performance")       exec luxenos-glass preset performance ;;
     "Glass: Balanced")          exec luxenos-glass preset balanced ;;
     "Glass: Rich")              exec luxenos-glass preset rich ;;
