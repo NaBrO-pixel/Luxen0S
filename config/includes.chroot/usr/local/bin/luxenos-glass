@@ -1020,7 +1020,7 @@ case "${1:-}" in
         ;;
     intensity)
         [ $# -eq 2 ] || die "usage: luxenos-glass intensity 0..100"
-        cmd_intensity "$2"
+        cmd_intensity "$2" || exit $?
         ;;
     theme)
         case "${2:-}" in
