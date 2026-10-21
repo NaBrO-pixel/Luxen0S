@@ -94,6 +94,7 @@ check_file config/includes.chroot/etc/skel/.config/gtk-4.0/gtk.css
 check_file config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy
 check_file config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop
 check_file config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop
+check_file config/includes.chroot/usr/share/applications/luxenos-accessibility.desktop
 check_file config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
 for script in \
     config/includes.chroot/usr/local/bin/luxenos-glass \
@@ -220,8 +221,8 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
         || fail "invalid luxenos-deb-install.desktop"
     desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop \
         || fail "invalid luxenos-wine-open.desktop"
-    desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop \
-        || fail "invalid luxenos-accessibility-settings.desktop"
+    desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-accessibility.desktop \
+        || fail "invalid luxenos-accessibility.desktop"
 fi
 
 # Kiosk / installer boot experience (what the live disc itself boots into)
