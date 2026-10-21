@@ -1,8 +1,7 @@
-# Installed-system login: greetd authenticates the user, then starts Sway.
-# agreety is shipped with greetd; no third-party sway-greeter package is needed.
+# Graphical LuxenOS login: Sway provides the compositor for wlgreet.
 [terminal]
 vt = 1
 
 [default_session]
-command = "agreety --cmd sway"
+command = "/usr/bin/sway --config /etc/greetd/sway-config"
 user = "_greetd"
