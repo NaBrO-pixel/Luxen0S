@@ -42,7 +42,7 @@ while :; do
             fi
             ;;
         "Reset Liquid Glass")
-            luxenos-glass intensity 55
+            luxenos-glass preset balanced
             ;;
         *) exit 0 ;;
     esac
