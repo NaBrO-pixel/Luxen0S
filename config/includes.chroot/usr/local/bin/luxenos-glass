@@ -858,6 +858,7 @@ cmd_intensity() {
     anim=$((value * 2))
     gaps=$((value * 8 / 100))
     dim=$((value * 6 / 100))
+    fallback_opacity=$((88 - value * 23 / 100))
     border_width=$((1 + value / 70))
     highlight=$((value * 30 / 100))
     if [ "$value" -eq 0 ]; then
@@ -886,6 +887,7 @@ cmd_intensity() {
     set_user_key GLASS_ANIM_MS "$anim"
     set_user_key GLASS_GAPS "$gaps"
     set_user_key GLASS_DIM_INACTIVE "$dim"
+    set_user_key GLASS_FALLBACK_OPACITY "$fallback_opacity"
     set_user_key GLASS_BORDER_WIDTH "$border_width"
     set_user_key GLASS_SHEEN "$sheen"
     set_user_key GLASS_HIGHLIGHT_OPACITY "$highlight"
