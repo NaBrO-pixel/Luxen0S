@@ -40,7 +40,7 @@ if [ "${1:-}" = accessibility ]; then
     exit $?
 fi
 
-choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 14
+choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 16
 Network & Wi-Fi
 Sound
 Appearance (GTK theme)
