@@ -4,5 +4,5 @@
 vt = 1
 
 [default_session]
-command = "/usr/local/bin/sway --config /etc/greetd/sway-config"
+command = "/usr/local/bin/luxenos-sway-session --config /etc/greetd/sway-config"
 user = "_greetd"
