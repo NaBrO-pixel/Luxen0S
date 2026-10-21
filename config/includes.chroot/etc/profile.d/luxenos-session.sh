@@ -1,7 +1,8 @@
 # LuxenOS: start the desktop when a normal user logs in on a local console.
-# Sourced by /etc/profile, so it must stay POSIX sh.
+# Sourced by /etc/profile, so it must stay POSIX sh. Installed systems normally
+# use greetd to launch Sway directly; this remains a console-login fallback.
 #
-#   installed system / live "desktop" session   ->  sway (~/.config/sway/config)
+#   console-login fallback / live "desktop" session -> sway (~/.config/sway/config)
 #   live USB, default                           ->  sway with the installer kiosk
 #                                                   config (Calamares only)
 #
