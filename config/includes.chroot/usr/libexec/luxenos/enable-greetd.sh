@@ -1,45 +1,42 @@
 #!/bin/sh
-# Run in the installed target (Calamares' shellprocess executes this).
-# Enable greetd so the installed system boots to a greeter.
+# Runs inside the installed target chroot during Calamares cleanup.
+# Enable greetd for the next boot; do not try to start a service inside a chroot.
 set -eu
 
 log() { echo "[luxenos-enable-greetd] $*"; }
 
-SYSTEMCTL=/bin/systemctl
-if [ ! -x "$SYSTEMCTL" ]; then
-    SYSTEMCTL=/usr/bin/systemctl
+SYSTEMCTL=$(command -v systemctl || true)
+if [ -z "$SYSTEMCTL" ]; then
+    log "ERROR: systemctl is missing from the installed target"
+    exit 1
 fi
 
-# Only proceed if systemctl exists in the target and greetd is installed.
-if [ -x "$SYSTEMCTL" ]; then
-    if [ -x /usr/bin/greetd ] || [ -x /usr/sbin/greetd ]; then
-        log "Reloading systemd unit files"
-        "$SYSTEMCTL" daemon-reload || {
-            log "ERROR: systemctl daemon-reload failed"
-            exit 1
-        }
-
-        log "Enabling and starting greetd.service"
-        if ! "$SYSTEMCTL" enable --now greetd.service >/dev/null 2>&1; then
-            log "ERROR: could not enable/start greetd.service"
-            exit 1
-        fi
-
-        if ! "$SYSTEMCTL" is-active --quiet greetd.service; then
-            log "ERROR: greetd.service is not active"
-            exit 1
-        fi
-
-        if [ -f /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf ]; then
-            log "Removing live autologin drop-in from installed system"
-            rm -f /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf || true
-        fi
-    else
-        log "greetd is not installed in the image; skipping enable"
-    fi
-else
-    log "systemctl not available; cannot enable display manager"
+if ! command -v greetd >/dev/null 2>&1; then
+    log "ERROR: greetd is not installed in the target"
     exit 1
+fi
+
+if [ ! -f /etc/greetd/config.toml ]; then
+    log "ERROR: /etc/greetd/config.toml is missing"
+    exit 1
+fi
+
+# --root writes enablement links into the target filesystem without contacting
+# a running systemd manager (which is not available inside the install chroot).
+log "Enabling greetd for the next boot"
+if ! "$SYSTEMCTL" --root=/ enable greetd.service; then
+    log "ERROR: could not enable greetd.service in the installed target"
+    exit 1
+fi
+
+if ! "$SYSTEMCTL" --root=/ is-enabled --quiet greetd.service; then
+    log "ERROR: greetd.service did not become enabled"
+    exit 1
+fi
+
+if [ -f /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf ]; then
+    log "Removing live autologin drop-in from installed system"
+    rm -f /etc/systemd/system/getty@tty1.service.d/luxenos-autologin.conf
 fi
 
 exit 0
