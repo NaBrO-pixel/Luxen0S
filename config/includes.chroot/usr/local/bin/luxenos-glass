@@ -963,6 +963,7 @@ border            ${BOP}% x ${GLASS_BORDER_WIDTH}px
 radius            ${R}px
 shadow            $GLASS_SHADOW
 animation         ${GLASS_ANIM_MS}ms  (reduce motion: $GLASS_REDUCE_MOTION)
+intensity          $(cmd_get intensity 2>/dev/null)%
 gaps              ${GLASS_GAPS}px
 accent            $GLASS_ACCENT
 font              $GLASS_FONT ${GLASS_FONT_SIZE}px
