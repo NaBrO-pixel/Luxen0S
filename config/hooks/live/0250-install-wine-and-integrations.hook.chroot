@@ -14,7 +14,7 @@ log() { echo "[LuxenOS Wine/Deb] $*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 # 1. Permissions --------------------------------------------------------------
-for f in /usr/local/bin/luxenos-* /usr/libexec/luxenos/luxenos-pkg-root; do
+for f in /usr/local/bin/luxenos-* /usr/libexec/luxenos/*; do
     if [ -f "$f" ]; then chmod 0755 "$f"; fi
 done
 chmod 0755 /usr/libexec/luxenos 2>/dev/null || true
