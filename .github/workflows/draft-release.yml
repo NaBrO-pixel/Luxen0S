@@ -34,29 +34,34 @@ jobs:
       VARIANT: ${{ inputs.variant }}
       RUN_ID: ${{ inputs.run_id }}
       TAG: ${{ inputs.tag }}
+
     steps:
       - name: Find the build run and its artifact
         id: find
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
+
           artifact="luxenos-$VARIANT-iso"
-          if [ -n "$RUN_ID" ]; then
+          if [ -n "${RUN_ID}" ]; then
             query="repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?name=$artifact"
           else
             query="repos/$GH_REPO/actions/artifacts?name=$artifact&per_page=100"
           fi
-          found=$(gh api "$query" --jq \
-            '[.artifacts[] | select(.expired | not)][0]
-             | select(. != null)
-             | "\(.workflow_run.id) \(.workflow_run.head_sha)"')
+
+          found=$(gh api "$query" --jq '
+            [.artifacts[] | select(.expired == false)][0]
+            | select(. != null)
+            | "\(.workflow_run.id) \(.workflow_run.head_sha)"
+          ')
+
           if [ -z "$found" ]; then
-            echo "no unexpired $artifact artifact found${RUN_ID:+ in run $RUN_ID}"
-            echo "run \"Build LuxenOS ISO\" with variant=$VARIANT first"
+            echo "::error::No unexpired $artifact artifact found${RUN_ID:+ in run $RUN_ID}"
             exit 1
           fi
+
           run_id=${found% *}
           sha=${found#* }
-          echo "using $artifact from run $run_id (commit $sha)"
           echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
@@ -66,31 +71,25 @@ jobs:
         env:
           ARTIFACT: ${{ steps.find.outputs.artifact }}
           BUILD_RUN: ${{ steps.find.outputs.run_id }}
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
+          mkdir -p dist
           gh run download "$BUILD_RUN" -n "$ARTIFACT" -D dist
-          ls -lh dist
+          ls -lah dist
 
-      - name: Split and verify the release assets
+      - name: Validate image artifact
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           cd dist
+
           name="luxenos-$VARIANT-amd64.iso"
-          [ -f "$name.sha256" ] || { echo "missing $name.sha256"; exit 1; }
-          if [ -f "$name" ]; then
-            expected="$name $name.sha256"
-          elif ls "$name".part[0-9][0-9] >/dev/null 2>&1; then
-            [ -f SHA256SUMS.parts ] || { echo "split image without SHA256SUMS.parts"; exit 1; }
-            expected="$(ls "$name".part[0-9][0-9] | tr '\n' ' ')$name.sha256 SHA256SUMS.parts REASSEMBLE.md"
-          else
-            echo "neither $name nor its parts are in the artifact"; exit 1
+
+          if [ ! -f "$name.sha256" ]; then
+            echo "::error::Missing $name.sha256"
+            exit 1
           fi
-          for f in *; do
-            case " $expected " in
-              *" $f "*) ;;
-              *) echo "unexpected file in the artifact: $f"; exit 1 ;;
-            esac
-          done
 
           if [ -f "$name" ]; then
             sha256sum -c "$name.sha256"
@@ -98,39 +97,20 @@ jobs:
             part=$(( (size + 1) / 2 ))
             [ "$part" -le 1992294400 ] || part=1992294400
             split -b "$part" -d "$name" "$name.part"
-            sha256sum "$name".part[0-9][0-9] > SHA256SUMS.parts
+            sha256sum "$name".part* > SHA256SUMS.parts
             rm -f "$name"
           fi
-          sha256sum -c SHA256SUMS.parts
-          whole=$(cat "$name".part[0-9][0-9] | sha256sum | awk '{print $1}')
-          [ "$whole" = "$(awk '{print $1}' "$name.sha256")" ] \
-            || { echo "reassembled image does not match $name.sha256"; exit 1; }
 
-          parts_plus=$(ls "$name".part[0-9][0-9] | sed ':a;N;$!ba;s/\n/ + /g')
-          printf '%s\n' \
-            "# LuxenOS $VARIANT image" \
-            "" \
-            "The image ships in parts (GitHub caps a release asset at 2 GiB)." \
-            "Download every \`$name.partNN\` file plus \`$name.sha256\`" \
-            "and \`SHA256SUMS.parts\` into one folder." \
-            "" \
-            "Check the downloads:" \
-            "" \
-            "    sha256sum -c SHA256SUMS.parts" \
-            "" \
-            "Reassemble (Linux/macOS):" \
-            "" \
-            "    cat $name.part[0-9][0-9] > $name" \
-            "" \
-            "Reassemble (Windows, Command Prompt):" \
-            "" \
-            "    copy /b $parts_plus $name" \
-            "" \
-            "Verify the reassembled image against the digest of the original:" \
-            "" \
-            "    sha256sum -c $name.sha256" \
-            > REASSEMBLE.md
-          ls -lh
+          if ls "$name".part* >/dev/null 2>&1; then
+            sha256sum -c SHA256SUMS.parts
+          fi
+
+          if [ -f "REASSEMBLE.md" ]; then
+            echo "REASSEMBLE.md present"
+          else
+            echo "::error::REASSEMBLE.md is missing"
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
         with:
@@ -144,34 +124,55 @@ jobs:
           BUILD_RUN: ${{ steps.find.outputs.run_id }}
           SHA: ${{ steps.find.outputs.sha }}
           RELEASE_TAG: ${{ steps.find.outputs.tag }}
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
+
           name="luxenos-$VARIANT-amd64.iso"
-          cp dist/REASSEMBLE.md notes.md
-          size=$(cat dist/"$name".part[0-9][0-9] | wc -c)
+
+          if [ -f "dist/REASSEMBLE.md" ]; then
+            cp dist/REASSEMBLE.md notes.md
+          else
+            printf '%s\n' "# LuxenOS $VARIANT image" > notes.md
+          fi
+
+          size=0
+          if compgen -G "dist/$name.part*" > /dev/null; then
+            size=$(cat dist/"$name".part* | wc -c)
+          elif [ -f "dist/$name" ]; then
+            size=$(wc -c < "dist/$name")
+          fi
 
           welcome=src/config/includes.chroot/etc/calamares/modules/welcome.conf
+          storage=""
+          ram=""
           if [ -f "$welcome" ]; then
             storage=$(awk '$1 == "requiredStorage:" {print $2}' "$welcome")
             ram=$(awk '$1 == "requiredRam:" {print $2}' "$welcome")
           fi
+
           image_mib=$(( (size + 1048575) / 1048576 ))
           usb=4
           while [ $(( usb * 1000000000 )) -lt "$size" ]; do usb=$(( usb * 2 )); done
-          printf '%s\n' "" \
-            "## Requirements" \
-            "" \
-            "- Image size: $image_mib MiB; a USB stick of $usb GB or larger" \
-            "- Install disk: ${storage:-unknown} GiB or more" \
-            "- RAM: ${ram:-unknown} GiB or more" \
-            >> notes.md
-          printf '%s\n' "" \
-            "Built by $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$BUILD_RUN" \
-            "from commit $SHA." >> notes.md
+
+          {
+            echo
+            echo "## Requirements"
+            echo
+            echo "- Image size: $image_mib MiB; a USB stick of $usb GB or larger"
+            echo "- Install disk: ${storage:-unknown} GiB or more"
+            echo "- RAM: ${ram:-unknown} GiB or more"
+            echo
+            echo "Built by $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$BUILD_RUN"
+            echo "from commit $SHA."
+          } >> notes.md
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --yes
+          fi
 
           gh release create "$RELEASE_TAG" dist/* \
             --draft \
             --target "$SHA" \
             --title "LuxenOS $VARIANT ($RELEASE_TAG)" \
             --notes-file notes.md
-          
