@@ -390,12 +390,6 @@ starts the session. It does not configure Google Play Store certification.
 
 ## Glass, SwayFX and dependencies
 
-### Accessibility: Liquid Glass strength
-
-Open **Settings → Accessibility** from the app launcher, or choose **Settings: Accessibility** from the Super+C Controls menu. The graphical slider runs from **0% (flat/minimal)** to **100% (stronger translucency, blur, rounded corners, shadows and saturation)**. Changes are applied live and saved per user in `~/.config/luxenos/glass.conf`; the system-wide defaults remain in `/etc/luxenos/glass.conf`. The slider respects the fallback opacity and minimum-contrast protections, and blur/rounded windows/shadows require SwayFX; stock Sway uses the closest supported translucent styling.
-
-The same controls include **Reduce motion**, which disables transitions and GTK animations. For terminal use, run `luxenos-glass intensity 0` through `luxenos-glass intensity 100`, or choose a preset with `luxenos-glass preset performance|balanced|rich`.
-
 ### Is SwayFX active?
 
 ```sh
