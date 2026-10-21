@@ -63,7 +63,7 @@ case $choice in
     "Network & Wi-Fi")          exec luxenos-network ;;
     "Sound")                    exec pavucontrol-qt ;;
     "Appearance (GTK theme)")   exec nwg-look ;;
-    "Settings: Accessibility")  exec luxenos-accessibility-settings ;;
+    "Settings: Accessibility")  exec sh /usr/local/bin/luxenos-accessibility-settings ;;
     "Glass: Performance")       exec luxenos-glass preset performance ;;
     "Glass: Balanced")          exec luxenos-glass preset balanced ;;
     "Glass: Rich")              exec luxenos-glass preset rich ;;
