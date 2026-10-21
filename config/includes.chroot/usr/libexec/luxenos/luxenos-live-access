@@ -29,18 +29,30 @@ if ! grep -qw 'boot=live' /proc/cmdline 2>/dev/null || [ ! -d /run/live ]; then
     exit 0
 fi
 
-# Live user name: live-config's username= boot parameter, else the build-time
-# name written by config/hooks/live/0150-installer-kiosk.hook.chroot.
-user=$(cat /etc/luxenos-installer/live-username 2>/dev/null || echo user)
+# Live user name: the build-time live user is authoritative. A kernel boot
+# parameter may override it only if it matches the generated live username.
+expected_user=$(cat /etc/luxenos-installer/live-username 2>/dev/null || echo user)
+user=$expected_user
 set -f  # split the command line into words, never glob them
 # shellcheck disable=SC2013
 for p in $(cat /proc/cmdline); do
     case $p in
-        username=*|live-config.username=*) user=${p#*username=} ;;
+        username=*|live-config.username=*)
+            candidate=${p#*username=}
+            case "$candidate" in
+                "$expected_user")
+                    user=$candidate
+                    ;;
+                *)
+                    log "ERROR: refusing live username '$candidate' (expected '$expected_user')"
+                    exit 1
+                    ;;
+            esac
+            ;;
     esac
 done
 set +f
-case $user in
+case "$user" in
     root|''|-*|*[!a-z0-9_-]*)
         log "ERROR: refusing live user name '$user'"
         exit 1

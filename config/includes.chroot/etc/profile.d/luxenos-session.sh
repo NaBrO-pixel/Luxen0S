@@ -1,4 +1,4 @@
-# LuxenOS: start the desktop when a normal user logs in on the first console.
+# LuxenOS: start the desktop when a normal user logs in on a local console.
 # Sourced by /etc/profile, so it must stay POSIX sh.
 #
 #   installed system / live "desktop" session   ->  sway (~/.config/sway/config)
@@ -11,7 +11,10 @@
 
 if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ] \
     && [ "$(id -u)" -ne 0 ] \
-    && [ "$(tty 2>/dev/null)" = "/dev/tty1" ] \
+    && case "$(tty 2>/dev/null || true)" in \
+           /dev/tty[0-9]*|/dev/console) true ;; \
+           *) false ;; \
+       esac \
     && [ ! -e "${HOME:-/nonexistent}/.config/luxenos/no-autostart" ] \
     && command -v sway >/dev/null 2>&1; then
 
@@ -20,7 +23,7 @@ if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ] \
     # Machines without a working GPU driver (most VMs, brand-new GPUs) only
     # have Mesa's software renderer (llvmpipe), which wlroots refuses unless
     # told otherwise -- Sway then exits and the console is all you see. Has
-    # no effect when a hardware renderer is available. VMs also often draw no
+    # no effect when a hardware renderer is available.
     # hardware cursor.
     export WLR_RENDERER_ALLOW_SOFTWARE=1
     if command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt -q --vm 2>/dev/null; then
