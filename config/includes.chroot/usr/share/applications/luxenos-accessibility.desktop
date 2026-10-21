@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Accessibility Settings
+Comment=Adjust Liquid Glass intensity and reduce motion
+Exec=sh /usr/local/bin/luxenos-accessibility-settings
+Icon=preferences-desktop-accessibility
+Terminal=false
+Categories=Settings;Accessibility;System;
+Keywords=accessibility;liquid glass;transparency;blur;motion;
