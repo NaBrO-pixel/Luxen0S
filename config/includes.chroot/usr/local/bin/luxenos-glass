@@ -896,6 +896,8 @@ cmd_get() {
         intensity)
             if [ -r "$USER_CONF" ] && grep -q '^GLASS_INTENSITY=' "$USER_CONF"; then
                 sed -n 's/^GLASS_INTENSITY=//p' "$USER_CONF" | tail -n 1
+            elif [ "${GLASS_ENABLE:-yes}" = no ]; then
+                echo 0
             elif [ -n "${GLASS_INTENSITY:-}" ]; then
                 printf '%s\\n' "$GLASS_INTENSITY"
             else
