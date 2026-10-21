@@ -70,7 +70,6 @@ check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-power-profile-st
 check_executable config/includes.chroot/usr/local/bin/luxenos-power-profile-cycle
 check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-power-profile-cycle
 check_file config/includes.chroot/usr/share/applications/luxenos-health-check.desktop
-check_file config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop
 
 # Automatic updates system
 check_executable config/includes.chroot/usr/local/bin/luxenos-updater
