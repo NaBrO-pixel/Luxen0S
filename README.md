@@ -79,6 +79,8 @@ panel opacity is raised until text keeps the configured contrast
 | `rich` | radius 8, 3 passes | deep | 55% | 200 ms | radius 16, punchier blur colour, inactive windows dimmed |
 | `flat` (command only) | off | off | 100% | none | no glass at all |
 
+**Graphical accessibility settings.** Open **Super+C → Settings: Accessibility** or launch **Accessibility Settings** from the app launcher. The 0–100 Liquid Glass slider adjusts opacity, blur strength, border visibility, shadows, corner radius, saturation, spacing and animation. Lower values are simpler and lighter on the GPU; 0 disables glass, while 100 applies the strongest available treatment. The same screen has a **Reduce motion** toggle and a reset option. The slider saves per-user overrides and does not change `/etc/luxenos/glass.conf`.
+
 **Configuration.** System defaults: `/etc/luxenos/glass.conf` (documented,
 every key explained). Your overrides: `~/.config/luxenos/glass.conf`, same
 format, wins over the system file. The file is parsed, not sourced; invalid
