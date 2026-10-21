@@ -273,7 +273,7 @@ resolve_effective() {
 
     OPA=$GLASS_OPACITY
     if [ "$GLASS_ENABLE" = no ]; then
-        OPA=100; GLASS_SHADOW=0; GLASS_ANIM_MS=0; SHEEN=0
+        OPA=100; GLASS_SHADOW=0; GLASS_ANIM_MS=0; SHEEN=0; R=0; BOP=0
     else
         SHEEN=1
         # Without real blur the backdrop is not softened: panels get an
@@ -293,7 +293,7 @@ resolve_effective() {
     OPA_STRONG=$(min2 100 $(( OPA + 18 )))
     if [ "$GLASS_ENABLE" = no ]; then OPA_STRONG=100; fi
     SHADOW_A=$(( GLASS_SHADOW * 5 / 10 ))
-    R=$GLASS_RADIUS
+    if [ "$GLASS_ENABLE" = no ]; then R=0; else R=$GLASS_RADIUS; fi
     R_IN=$(( R > 4 ? R - 4 : 0 ))
     BAR_H=$(( GLASS_FONT_SIZE * 2 + 8 ))
 }
