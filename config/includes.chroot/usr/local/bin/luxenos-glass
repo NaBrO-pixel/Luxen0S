@@ -897,7 +897,7 @@ cmd_get() {
         effects) printf '%s\n' "$FX" ;;
         blur) printf '%s\n' "$BLUR_ON" ;;
         animation_ms) printf '%s\n' "$GLASS_ANIM_MS" ;;
-        *) die "unknown name '${1:-}' (base text accent opacity radius theme preset compositor effects blur animation_ms)" ;;
+        *) die "unknown name '${1:-}' (base text accent opacity radius theme preset intensity reduce_motion compositor effects blur animation_ms)" ;;
     esac
 }
 
