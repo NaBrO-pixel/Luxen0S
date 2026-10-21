@@ -890,8 +890,13 @@ cmd_get() {
         preset) printf '%s\n' "$GLASS_PRESET" ;;
         reduce_motion) printf '%s\n' "$GLASS_REDUCE_MOTION" ;;
         intensity)
-            if [ -r "$USER_CONF" ] && grep -q '^GLASS_INTENSITY=' "$USER_CONF"; then sed -n 's/^GLASS_INTENSITY=//p' "$USER_CONF" | tail -n 1
-            else case "$GLASS_PRESET" in performance) echo 25 ;; balanced) echo 55 ;; rich) echo 85 ;; *) echo 0 ;; esac; fi
+            if [ -r "$USER_CONF" ] && grep -q '^GLASS_INTENSITY=' "$USER_CONF"; then
+                sed -n 's/^GLASS_INTENSITY=//p' "$USER_CONF" | tail -n 1
+            elif [ -n "${GLASS_INTENSITY:-}" ]; then
+                printf '%s\\n' "$GLASS_INTENSITY"
+            else
+                case "$GLASS_PRESET" in performance) echo 25 ;; balanced) echo 55 ;; rich) echo 85 ;; *) echo 0 ;; esac
+            fi
             ;;
         compositor) printf '%s\n' "$COMP" ;;
         effects) printf '%s\n' "$FX" ;;
