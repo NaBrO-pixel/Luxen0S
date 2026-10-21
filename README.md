@@ -86,9 +86,7 @@ every key explained). Your overrides: `~/.config/luxenos/glass.conf`, same
 format, wins over the system file. The file is parsed, not sourced; invalid
 values are reported and replaced by safe defaults. Missing files are fine.
 
-**Settings → Accessibility.** Open **Super+C → Settings: Accessibility** to get a graphical Liquid Glass intensity slider (0–100). It adjusts opacity, blur strength, borders, shadows, corner radius, saturation, spacing and animation intensity together; the choice is saved for your user. Blur and rounded window effects require SwayFX; stock Sway uses the readable tinted fallback. The same screen lets you toggle reduced motion.
-
-**Accessibility.** Open **Super+C → Settings: Accessibility** to adjust Liquid Glass with a graphical 0–100 slider. Zero disables the glass treatment; higher values progressively increase translucency, blur, rounding, border strength, shadows, saturation, and animation where supported. The slider saves per-user overrides and reapplies the theme immediately. Real compositor blur and rounded window corners require SwayFX; stock Sway keeps panels more opaque for readability. The same control is available in a terminal with `luxenos-glass intensity 0..100`.
+**Settings → Accessibility.** Open **Super+C → Settings: Accessibility**, or launch **Accessibility Settings** from the app launcher, to open the graphical settings panel. The 0–100 Liquid Glass slider adjusts opacity, blur strength, borders, shadows, corner radius, saturation, spacing and animation intensity together; the choice is saved per-user and applied immediately. Zero disables the glass treatment; higher values progressively add effects. Real compositor blur and rounded window corners require SwayFX; stock Sway keeps panels more opaque for readability. The same panel toggles reduced motion and can reset the appearance to the balanced default. Terminal alternative: `luxenos-glass intensity 0..100`.
 
 **Reduced motion.** `GLASS_REDUCE_MOTION=yes` sets all transitions to zero
 (bar, launcher, GTK `enable-animations`). Hover and focus colours still change
