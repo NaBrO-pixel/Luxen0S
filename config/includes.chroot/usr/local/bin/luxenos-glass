@@ -1027,7 +1027,7 @@ case "${1:-}" in
             dark|light) set_user_key GLASS_THEME "$2" ;;
             *) die "usage: luxenos-glass theme dark|light" ;;
         esac
-        cmd_apply; reload_ui
+        cmd_apply || exit $?; reload_ui
         ;;
     set)
         [ $# -eq 3 ] || die "usage: luxenos-glass set GLASS_KEY VALUE"
