@@ -250,7 +250,7 @@ used where a value is missing, and the hook logs the effective image type):
 | `WAYDROID_IMAGE_TYPE` | `GAPPS` or `VANILLA` | `GAPPS` (build fails on any other value) |
 | `WAYDROID_REPO_URL` | URL of the Waydroid repo-setup script | `https://repo.waydro.id` |
 | `WAYDROID_INSTALL_SCRIPT` | Local path to save that script to | `/tmp/waydroid-repo-setup.sh` |
-| `AURORA_STORE_URL` | URL to download the Aurora Store APK from | unset = Aurora Store is not bundled |
+| `AURORA_STORE_URL` | URL to download the Aurora Store APK from | Defaults to the pinned IzzyOnDroid APK |
 | `AURORA_STORE_DIR` | Directory for the downloaded APK | `/usr/share/luxenos/apks` |
 | `AURORA_STORE_SHA256` | Expected SHA-256 of the APK | **Required for release builds** when `AURORA_STORE_URL` is set |
 | `LUXENOS_ALLOW_UNPINNED_DOWNLOADS` | `1` to build without `AURORA_STORE_SHA256` | Dev builds only |
