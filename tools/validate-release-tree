@@ -87,6 +87,9 @@ check_shell_syntax config/hooks/live/0300-setup-auto-updates.hook.chroot
 
 # Liquid-glass theme, .deb / .exe double-click integration
 check_file config/includes.chroot/etc/luxenos/glass.conf
+check_executable config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
+check_file config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop
 check_file config/includes.chroot/etc/luxenos/wine.conf
 check_file config/includes.chroot/etc/xdg/mimeapps.list
 check_file config/includes.chroot/etc/skel/.config/wofi/config
