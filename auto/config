@@ -125,8 +125,7 @@ desktop (VARIANT=live), or no live system at all -- the Debian installer, booted
 straight from the ISO like a traditional install disc (VARIANT=traditional).
 On the two live images the default session can be overridden at boot by
 editing the kernel command line: add luxenos.session=desktop for the desktop,
-remove it for the installer. After installation the system boots to a tty1
-login that starts Sway.
+remove it for the installer. After installation the system boots to a greetd login prompt that starts Sway.
 
 Environment variables:
   VARIANT                   Image variant: installer, live or traditional
