@@ -28,6 +28,7 @@
 # Usage:
 #   luxenos-glass apply [--files-only|--sway-only]
 #   luxenos-glass preset performance|balanced|rich|flat
+#   luxenos-glass intensity 0..100  (Accessibility: Liquid Glass slider)
 #   luxenos-glass theme dark|light
 #   luxenos-glass set GLASS_KEY VALUE
 #   luxenos-glass get NAME         (base, text, accent, opacity, ... see status)
@@ -796,6 +797,59 @@ reload_ui() {
     return 0
 }
 
+clear_intensity_keys() {
+    [ -f "$USER_CONF" ] || return 0
+    tmp=$(mktemp "$CFG/luxenos/glass.conf.XXXXXX") || die "cannot write $CFG/luxenos"
+    CUR_TMP=$tmp
+    while IFS= read -r l || [ -n "$l" ]; do
+        case $l in
+            GLASS_ENABLE=*|GLASS_PRESET=*|GLASS_INTENSITY=*|GLASS_BLUR=*|GLASS_OPACITY=*|GLASS_BORDER_OPACITY=*|GLASS_SHADOW=*|GLASS_RADIUS=*|GLASS_BLUR_RADIUS=*|GLASS_BLUR_PASSES=*|GLASS_SATURATION=*|GLASS_BLUR_NOISE=*|GLASS_BLUR_BRIGHTNESS=*|GLASS_BLUR_CONTRAST=*|GLASS_ANIM_MS=*|GLASS_GAPS=*|GLASS_DIM_INACTIVE=*) ;;
+            *) printf '%s\n' "$l" ;;
+        esac
+    done < "$USER_CONF" > "$tmp"
+    mv -f "$tmp" "$USER_CONF" || die "cannot update $USER_CONF"
+    CUR_TMP=""
+}
+
+cmd_intensity() {
+    value=${1:-}
+    case $value in ''|*[!0-9]*) die "usage: luxenos-glass intensity 0..100" ;; esac
+    [ "$value" -ge 0 ] && [ "$value" -le 100 ] || die "intensity must be between 0 and 100"
+    mkdir -p "$CFG/luxenos" || die "cannot create $CFG/luxenos"
+    clear_intensity_keys
+    opacity=$((90 - value * 35 / 100)); border=$((12 + value * 20 / 100))
+    shadow=$((value * 60 / 100)); radius=$((4 + value * 12 / 100))
+    if [ "$value" -le 10 ]; then blur=no; blur_radius=0; else blur=yes; blur_radius=$((1 + (value - 11) * 7 / 89)); fi
+    passes=$((1 + value * 2 / 100)); saturation=$((100 + value * 35 / 100))
+    noise=$((value * 3 / 100)); brightness=$((100 + value * 5 / 100))
+    contrast=$((100 + value * 12 / 100)); anim=$((value * 2))
+    gaps=$((3 + value * 5 / 100)); dim=$((value * 6 / 100))
+    if [ "$value" -eq 0 ]; then enable=no; preset=performance
+    elif [ "$value" -lt 34 ]; then enable=yes; preset=performance
+    elif [ "$value" -lt 67 ]; then enable=yes; preset=balanced
+    else enable=yes; preset=rich
+    fi
+    set_user_key GLASS_INTENSITY "$value"
+    set_user_key GLASS_ENABLE "$enable"
+    set_user_key GLASS_PRESET "$preset"
+    set_user_key GLASS_BLUR "$blur"
+    set_user_key GLASS_OPACITY "$opacity"
+    set_user_key GLASS_BORDER_OPACITY "$border"
+    set_user_key GLASS_SHADOW "$shadow"
+    set_user_key GLASS_RADIUS "$radius"
+    set_user_key GLASS_BLUR_RADIUS "$blur_radius"
+    set_user_key GLASS_BLUR_PASSES "$passes"
+    set_user_key GLASS_SATURATION "$saturation"
+    set_user_key GLASS_BLUR_NOISE "$noise"
+    set_user_key GLASS_BLUR_BRIGHTNESS "$brightness"
+    set_user_key GLASS_BLUR_CONTRAST "$contrast"
+    set_user_key GLASS_ANIM_MS "$anim"
+    set_user_key GLASS_GAPS "$gaps"
+    set_user_key GLASS_DIM_INACTIVE "$dim"
+    cmd_apply
+    reload_ui
+}
+
 set_user_key() {
     case $1 in GLASS_*) ;; *) die "not a glass key: $1" ;; esac
     case $1 in *[!A-Z0-9_]*) die "bad key: $1" ;; esac
@@ -834,6 +888,10 @@ cmd_get() {
         radius) printf '%s\n' "$GLASS_RADIUS" ;;
         theme) printf '%s\n' "$GLASS_THEME" ;;
         preset) printf '%s\n' "$GLASS_PRESET" ;;
+        intensity)
+            if [ -r "$USER_CONF" ] && grep -q '^GLASS_INTENSITY=' "$USER_CONF"; then sed -n 's/^GLASS_INTENSITY=//p' "$USER_CONF" | tail -n 1
+            else case "$GLASS_PRESET" in performance) echo 25 ;; balanced) echo 55 ;; rich) echo 85 ;; *) echo 0 ;; esac; fi
+            ;;
         compositor) printf '%s\n' "$COMP" ;;
         effects) printf '%s\n' "$FX" ;;
         blur) printf '%s\n' "$BLUR_ON" ;;
@@ -895,14 +953,18 @@ case "${1:-}" in
         ;;
     preset)
         case "${2:-}" in
-            flat) set_user_key GLASS_ENABLE no ;;
-            performance|balanced|rich)
-                set_user_key GLASS_ENABLE yes
-                set_user_key GLASS_PRESET "$2"
+            flat|performance|balanced|rich)
+                clear_intensity_keys
+                if [ "$2" = flat ]; then set_user_key GLASS_ENABLE no
+                else set_user_key GLASS_ENABLE yes; set_user_key GLASS_PRESET "$2"; fi
                 ;;
             *) die "usage: luxenos-glass preset performance|balanced|rich|flat" ;;
         esac
         cmd_apply; reload_ui
+        ;;
+    intensity)
+        [ $# -eq 2 ] || die "usage: luxenos-glass intensity 0..100"
+        cmd_intensity "$2"
         ;;
     theme)
         case "${2:-}" in
