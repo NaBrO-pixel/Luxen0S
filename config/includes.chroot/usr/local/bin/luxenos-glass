@@ -844,7 +844,7 @@ cmd_intensity() {
     mkdir -p "$CFG/luxenos" || die "cannot create $CFG/luxenos"
     clear_intensity_keys
     opacity=$((90 - value * 35 / 100)); border=$((12 + value * 20 / 100))
-    shadow=$((value * 60 / 100)); radius=$((value * 16 / 100))
+    shadow=$((value * 60 / 100)); radius=$((value * 16 / 100)); highlight=$((value * 18 / 100))
     if [ "$value" -eq 0 ]; then opacity=100; border=0; radius=0; fi
     if [ "$value" -le 10 ]; then blur=no; blur_radius=0; else blur=yes; blur_radius=$((1 + (value - 11) * 7 / 89)); fi
     passes=$((1 + value * 2 / 100)); saturation=$((100 + value * 35 / 100))
@@ -854,9 +854,9 @@ cmd_intensity() {
     border_width=$((1 + value / 70)); highlight=$((value * 12 / 100))
     if [ "$value" -eq 0 ]; then sheen=no; else sheen=yes; fi
     highlight=$((value * 30 / 100))
-    if [ "$value" -eq 0 ]; then enable=no; preset=performance; opacity=100; border=0; shadow=0; radius=0; blur=no; blur_radius=0; gaps=0; dim=0; sheen=no
-    elif [ "$value" -lt 34 ]; then enable=yes; preset=performance; sheen=yes
-    elif [ "$value" -lt 67 ]; then enable=yes; preset=balanced; sheen=yes
+    if [ "$value" -eq 0 ]; then enable=no; preset=performance; opacity=100; border=0; shadow=0; radius=0; blur=no; blur_radius=0; gaps=0; dim=0; highlight=0; sheen=no; sheen=no
+    elif [ "$value" -lt 34 ]; then enable=yes; preset=performance; sheen=yes; sheen=yes
+    elif [ "$value" -lt 67 ]; then enable=yes; preset=balanced; sheen=yes; sheen=yes
     else enable=yes; preset=rich; sheen=yes
     fi
     set_user_key GLASS_INTENSITY "$value"
@@ -878,6 +878,8 @@ cmd_intensity() {
     set_user_key GLASS_ANIM_MS "$anim"
     set_user_key GLASS_GAPS "$gaps"
     set_user_key GLASS_DIM_INACTIVE "$dim"
+    set_user_key GLASS_SHEEN "$sheen"
+    set_user_key GLASS_HIGHLIGHT_OPACITY "$highlight"
     cmd_apply
     reload_ui
 }
