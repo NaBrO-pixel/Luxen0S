@@ -890,7 +890,7 @@ cmd_intensity() {
     set_user_key GLASS_ANIM_MS "$anim"
     set_user_key GLASS_GAPS "$gaps"
     set_user_key GLASS_DIM_INACTIVE "$dim"
-    cmd_apply
+    cmd_apply || return $?
     reload_ui
 }
 
@@ -1020,7 +1020,7 @@ case "${1:-}" in
                 ;;
             *) die "usage: luxenos-glass preset performance|balanced|rich|flat" ;;
         esac
-        cmd_apply; reload_ui
+        cmd_apply || exit $?; reload_ui
         ;;
     intensity)
         [ $# -eq 2 ] || die "usage: luxenos-glass intensity 0..100"
