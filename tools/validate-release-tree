@@ -192,8 +192,8 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
         || fail "invalid luxenos-deb-install.desktop"
     desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop \
         || fail "invalid luxenos-wine-open.desktop"
-    desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-accessibility.desktop \
-        || fail "invalid luxenos-accessibility.desktop"
+    desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop \
+        || fail "invalid luxenos-accessibility-settings.desktop"
 fi
 
 # Kiosk / installer boot experience (what the live disc itself boots into)
