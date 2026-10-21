@@ -32,15 +32,14 @@ your Linux desktop; Android apps appear as regular windows you can resize,
 snap, and switch between like anything else. Set up by
 `config/hooks/live/0100-install-waydroid.hook.chroot`:
 - Downloads and configures the Waydroid repo/package at build time.
-- Ships Aurora Store (an open-source Play Store frontend — no Google account
-  needed) pre-downloaded and checksum-verified, so it's ready to install
-  from first boot.
+- Can bundle Aurora Store when `AURORA_STORE_URL` and its matching
+  `AURORA_STORE_SHA256` are provided at build time. The default GitHub Actions
+  workflow does not set these, so its images do not include the APK.
 - Creates a one-shot systemd service that initializes the Android image on
   the *installed* system's first real boot.
-- `luxenos-setup-android` (installed to `/usr/local/bin`; also in the app
-  launcher as "Android Setup") walks through
-  Aurora Store installation and, optionally, official Google Play Store
-  certification for apps that require a Google account.
+- `luxenos-setup-android` (also in the app launcher as "Android Setup")
+  waits for first-boot initialization, starts the Waydroid session, verifies
+  it reaches RUNNING, and installs Aurora Store only if the APK was bundled.
 
 ### The desktop
 Sway (tiling Wayland compositor) + Waybar, configured under
@@ -201,8 +200,8 @@ the USB stick except the installer itself:
    sudo), contrib/non-free/non-free-firmware enabled, no leftover `cdrom:`
    apt source, and a `late_command` that runs the same
    `luxenos-finish-install` as Calamares.
-3. **Installed system.** Identical to the Calamares install: tty1 login,
-   Sway, the same hardening and Waydroid first-boot service.
+3. **Installed system.** Identical to the Calamares install: greetd login
+   prompt, Sway, the same hardening and Waydroid first-boot service.
 
 Use it when Calamares fails inside the live session, or on hardware where the
 live Sway/kiosk session does not start: d-i needs no graphical session from
@@ -364,15 +363,17 @@ The `traditional` image is flashed the same way.
 
 ## First boot
 
-After installing, log in on tty1 and Sway starts. Waydroid is already
-installed; internet access is required so it can download and initialize its
-Android image. To complete Android setup and install Aurora Store:
+After installing, log in through the greetd prompt and Sway starts. Waydroid
+is already installed; internet access is required so its first-boot service
+can download and initialize the Android image. To check initialization and
+start the Android session (and install Aurora Store if the APK was bundled):
 
 ```sh
 luxenos-setup-android
 ```
 
-This will initialize the Android container and optionally configure Google Play Store access.
+The first-boot service performs container initialization; this helper waits for it and
+starts the session. It does not configure Google Play Store certification.
 
 ## Key bindings
 
@@ -438,11 +439,11 @@ applet.
 
 ## Troubleshooting
 
-**Boots to a text login instead of Sway.**
-Log in on tty1 (Sway starts from `/etc/profile.d/luxenos-session.sh`, only on
-tty1, only as a normal user). Check `~/.config/luxenos/no-autostart` does not
-exist, then run `sway` by hand to see errors, and `journalctl -b` for the
-session. Ensure `libgl1`/Mesa drivers support your GPU.
+**The greetd login appears, but Sway does not start after authentication.**
+Check `systemctl status greetd` and `journalctl -u greetd -b`. Verify
+`/etc/greetd/config.toml` uses `agreety --cmd sway`, and ensure Sway and its
+Wayland dependencies are installed. If Sway exits immediately, try running
+`sway` from a separate TTY and inspect `journalctl -b` for GPU/Mesa errors.
 
 **No blur / rounded windows.**
 Expected on stock Sway. `luxenos-glass status` shows `compositor sway` and
