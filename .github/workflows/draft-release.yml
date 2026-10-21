@@ -1,20 +1,5 @@
 name: Draft LuxenOS release
 
-# Manual only. Takes the image artifact a "Build LuxenOS ISO" run uploaded
-# (luxenos-<variant>-iso.zip), extracts it, and drafts a GitHub release with
-# the extracted files as assets. The release stays a draft until someone
-# publishes it from the Releases page.
-#
-# Build artifacts are kept for 7 days (see build-iso.yml), so draft the
-# release within that window.
-#
-# Assets: the image always split into parts (luxenos-<variant>-amd64.iso.partNN),
-# plus luxenos-<variant>-amd64.iso.sha256 (digest of the whole image),
-# SHA256SUMS.parts and REASSEMBLE.md. If build-iso.yml left the image whole
-# (it only splits past the 2 GiB asset cap), it is split here. Every asset is
-# checked against its checksum before the release is drafted. The release notes quote
-# the installer's disk/RAM requirements from the welcome.conf of the commit
-# the image was built from, so they cannot drift from what Calamares checks.
 on:
   workflow_dispatch:
     inputs:
@@ -44,7 +29,7 @@ jobs:
       contents: write
       actions: read
     env:
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
       GH_REPO: ${{ github.repository }}
       VARIANT: ${{ inputs.variant }}
       RUN_ID: ${{ inputs.run_id }}
@@ -55,7 +40,6 @@ jobs:
         run: |
           set -eu
           artifact="luxenos-$VARIANT-iso"
-          # Artifacts come back newest first; skip ones already expired.
           if [ -n "$RUN_ID" ]; then
             query="repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?name=$artifact"
           else
@@ -78,8 +62,6 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG:-luxenos-$VARIANT-$run_id}" >> "$GITHUB_OUTPUT"
 
-      # gh run download fetches the zip and extracts it, so dist/ holds the
-      # image (or its parts), the checksums and REASSEMBLE.md when split.
       - name: Download and extract the image artifact
         env:
           ARTIFACT: ${{ steps.find.outputs.artifact }}
@@ -89,10 +71,6 @@ jobs:
           gh run download "$BUILD_RUN" -n "$ARTIFACT" -D dist
           ls -lh dist
 
-      # The release always ships the image split, whether or not build-iso.yml
-      # already split it: the parts, the digest of the whole image, the
-      # per-part digests and REASSEMBLE.md. Everything is verified, and anything
-      # unexpected in the artifact is refused instead of published.
       - name: Split and verify the release assets
         run: |
           set -eu
@@ -116,10 +94,6 @@ jobs:
 
           if [ -f "$name" ]; then
             sha256sum -c "$name.sha256"
-            # At most 1900 MiB per part (build-iso.yml's size, under GitHub's
-            # 2 GiB asset cap), and at least two parts even for a small image.
-            # Deliberately NOT "$name.parts.sha256": that name is matched by
-            # the "$name.part*" glob used to reassemble.
             size=$(stat -c%s "$name")
             part=$(( (size + 1) / 2 ))
             [ "$part" -le 1992294400 ] || part=1992294400
@@ -128,12 +102,10 @@ jobs:
             rm -f "$name"
           fi
           sha256sum -c SHA256SUMS.parts
-          # The recorded digest is of the whole image: reassemble to check it.
           whole=$(cat "$name".part[0-9][0-9] | sha256sum | awk '{print $1}')
           [ "$whole" = "$(awk '{print $1}' "$name.sha256")" ] \
             || { echo "reassembled image does not match $name.sha256"; exit 1; }
 
-          # Windows has no glob for this: spell out "part00 + part01 + ...".
           parts_plus=$(ls "$name".part[0-9][0-9] | sed ':a;N;$!ba;s/\n/ + /g')
           printf '%s\n' \
             "# LuxenOS $VARIANT image" \
@@ -160,7 +132,6 @@ jobs:
             > REASSEMBLE.md
           ls -lh
 
-      # Only the installer's requirements file is needed, at the build commit.
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.find.outputs.sha }}
@@ -185,7 +156,6 @@ jobs:
             ram=$(awk '$1 == "requiredRam:" {print $2}' "$welcome")
           fi
           image_mib=$(( (size + 1048575) / 1048576 ))
-          # Smallest common USB stick size (GB) the image fits on.
           usb=4
           while [ $(( usb * 1000000000 )) -lt "$size" ]; do usb=$(( usb * 2 )); done
           printf '%s\n' "" \
@@ -199,10 +169,9 @@ jobs:
             "Built by $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$BUILD_RUN" \
             "from commit $SHA." >> notes.md
 
-          # --target: a draft does not create its tag until it is published;
-          # this pins that tag to the commit the image was built from.
           gh release create "$RELEASE_TAG" dist/* \
             --draft \
             --target "$SHA" \
             --title "LuxenOS $VARIANT ($RELEASE_TAG)" \
             --notes-file notes.md
+          
