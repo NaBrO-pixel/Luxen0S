@@ -1,9 +1,8 @@
-# Debian greetd configuration for the installed system.
-# Use greetd's bundled text greeter; the authenticated user's login shell
-# starts Sway via /etc/profile.d/luxenos-session.sh.
+# Installed-system login: greetd authenticates the user, then starts Sway.
+# agreety is shipped with greetd; no third-party sway-greeter package is needed.
 [terminal]
 vt = 1
 
 [default_session]
-command = "agreety --cmd /bin/sh"
-user = "_greetd"
+command = "agreety --cmd sway"
+user = "greeter"
