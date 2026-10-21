@@ -55,7 +55,7 @@ One coherent translucent look - floating rounded Waybar pills, a glass
 launcher, glass notifications, thin light borders, soft highlights - tuned
 from one file: `/etc/luxenos/glass.conf`.
 
-| | Stock Sway (what the ISO ships) | SwayFX (optional) |
+| | Stock Sway fallback | SwayFX (bundled by the ISO build) |
 | --- | --- | --- |
 | Translucent panels, borders, accent, sheen | yes | yes |
 | Rounded panels (Waybar/wofi/dunst/GTK) | yes (CSS) | yes |
@@ -64,9 +64,13 @@ from one file: `/etc/luxenos/glass.conf`.
 | Layer effects (bar/launcher/notification blur + shadows) | no | yes |
 | Dimmed inactive windows | no | yes (`rich`) |
 
-Nothing is assumed: `luxenos-glass` asks the *running* compositor whether it
-accepts SwayFX-only commands, and applies every setting independently, so one
-unsupported effect never stops the rest. Text is never left unreadable:
+The ISO build compiles SwayFX 0.5.3 with its matching SceneFX 0.4.1 and wlroots
+0.19.0 in `config/hooks/live/0200-build-swayfx.hook.chroot`. The hook verifies
+the resulting compositor and fails the image build if SwayFX was not installed.
+Stock Debian Sway remains installed as a recovery/fallback binary. At runtime,
+`luxenos-glass` asks the *running* compositor whether it accepts SwayFX-only
+commands, and applies every setting independently, so one unsupported effect
+never stops the rest. Text is never left unreadable:
 panel opacity is raised until text keeps the configured contrast
 (`GLASS_MIN_CONTRAST`) over the worst-case backdrop, whatever the preset.
 
@@ -79,7 +83,7 @@ panel opacity is raised until text keeps the configured contrast
 | `rich` | radius 8, 3 passes | deep | 55% | 200 ms | radius 16, punchier blur colour, inactive windows dimmed |
 | `flat` (command only) | off | off | 100% | none | no glass at all |
 
-**Graphical accessibility settings.** Open **Super+C → Settings: Accessibility** or launch **Accessibility Settings** from the app launcher. The 0–100 Liquid Glass slider adjusts opacity, blur strength, border visibility, shadows, corner radius, saturation, spacing and animation. Lower values are simpler and lighter on the GPU; 0 disables glass, while 100 applies the strongest available treatment. The same screen has a **Reduce motion** toggle and a reset option. Changes are saved per user and applied immediately; the system defaults in `/etc/luxenos/glass.conf` remain unchanged. Real compositor blur and rounded window corners require SwayFX; stock Sway keeps panels more opaque for readability.
+**Graphical accessibility settings.** Open **Super+C → Settings: Accessibility** or launch **Accessibility Settings** from the app launcher. The 0–100 Liquid Glass slider adjusts opacity, blur strength, border visibility, shadows, corner radius, saturation, spacing and animation. Lower values are simpler and lighter on the GPU; 0 disables glass, while 100 applies the strongest available treatment. The same screen has a **Reduce motion** toggle and a reset option. Changes are saved per user and applied immediately; the system defaults in `/etc/luxenos/glass.conf` remain unchanged. Real compositor blur and rounded window corners require SwayFX; stock Sway fallback keeps panels more opaque for readability.
 
 **Reduced motion.** `GLASS_REDUCE_MOTION=yes` sets all transitions to zero
 (bar, launcher, GTK `enable-animations`). Hover and focus colours still change
