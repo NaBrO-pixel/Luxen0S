@@ -34,14 +34,17 @@ on:
         required: false
 
 permissions:
-  contents: write   # create the draft release
-  actions: read     # read artifacts of other workflow runs
+  contents: write
+  actions: read
 
 jobs:
   draft-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       VARIANT: ${{ inputs.variant }}
       RUN_ID: ${{ inputs.run_id }}
