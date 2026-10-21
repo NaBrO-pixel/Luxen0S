@@ -1006,16 +1006,96 @@ case "${1:-}" in
         case "${2:-}" in
             flat|performance|balanced|rich)
                 clear_intensity_keys
-                if [ "$2" = flat ]; then
-                    set_user_key GLASS_ENABLE no
-                    set_user_key GLASS_OPACITY 100
-                    set_user_key GLASS_BORDER_OPACITY 0
-                    set_user_key GLASS_SHADOW 0
-                    set_user_key GLASS_RADIUS 0
-                    set_user_key GLASS_BLUR no
-                    set_user_key GLASS_ANIM_MS 0
-                    set_user_key GLASS_DIM_INACTIVE 0
-                else set_user_key GLASS_ENABLE yes; set_user_key GLASS_PRESET "$2"; fi
+                case "$2" in
+                    flat)
+                        set_user_key GLASS_INTENSITY 0
+                        set_user_key GLASS_ENABLE no
+                        set_user_key GLASS_PRESET performance
+                        set_user_key GLASS_BLUR no
+                        set_user_key GLASS_OPACITY 100
+                        set_user_key GLASS_BORDER_OPACITY 0
+                        set_user_key GLASS_SHADOW 0
+                        set_user_key GLASS_RADIUS 0
+                        set_user_key GLASS_BLUR_RADIUS 0
+                        set_user_key GLASS_BLUR_PASSES 1
+                        set_user_key GLASS_SATURATION 100
+                        set_user_key GLASS_BLUR_NOISE 0
+                        set_user_key GLASS_BLUR_BRIGHTNESS 100
+                        set_user_key GLASS_BLUR_CONTRAST 100
+                        set_user_key GLASS_ANIM_MS 0
+                        set_user_key GLASS_GAPS 0
+                        set_user_key GLASS_DIM_INACTIVE 0
+                        set_user_key GLASS_BORDER_WIDTH 0
+                        set_user_key GLASS_SHEEN no
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 0
+                        ;;
+                    performance)
+                        set_user_key GLASS_INTENSITY 25
+                        set_user_key GLASS_ENABLE yes
+                        set_user_key GLASS_PRESET performance
+                        set_user_key GLASS_BLUR no
+                        set_user_key GLASS_OPACITY 88
+                        set_user_key GLASS_BORDER_OPACITY 18
+                        set_user_key GLASS_SHADOW 0
+                        set_user_key GLASS_RADIUS 8
+                        set_user_key GLASS_BLUR_RADIUS 0
+                        set_user_key GLASS_BLUR_PASSES 1
+                        set_user_key GLASS_SATURATION 100
+                        set_user_key GLASS_BLUR_NOISE 0
+                        set_user_key GLASS_BLUR_BRIGHTNESS 100
+                        set_user_key GLASS_BLUR_CONTRAST 100
+                        set_user_key GLASS_ANIM_MS 0
+                        set_user_key GLASS_GAPS 4
+                        set_user_key GLASS_DIM_INACTIVE 0
+                        set_user_key GLASS_BORDER_WIDTH 1
+                        set_user_key GLASS_SHEEN yes
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 9
+                        ;;
+                    balanced)
+                        set_user_key GLASS_INTENSITY 55
+                        set_user_key GLASS_ENABLE yes
+                        set_user_key GLASS_PRESET balanced
+                        set_user_key GLASS_BLUR yes
+                        set_user_key GLASS_OPACITY 68
+                        set_user_key GLASS_BORDER_OPACITY 26
+                        set_user_key GLASS_SHADOW 35
+                        set_user_key GLASS_RADIUS 12
+                        set_user_key GLASS_BLUR_RADIUS 5
+                        set_user_key GLASS_BLUR_PASSES 2
+                        set_user_key GLASS_SATURATION 115
+                        set_user_key GLASS_BLUR_NOISE 2
+                        set_user_key GLASS_BLUR_BRIGHTNESS 95
+                        set_user_key GLASS_BLUR_CONTRAST 95
+                        set_user_key GLASS_ANIM_MS 120
+                        set_user_key GLASS_GAPS 6
+                        set_user_key GLASS_DIM_INACTIVE 0
+                        set_user_key GLASS_BORDER_WIDTH 1
+                        set_user_key GLASS_SHEEN yes
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 9
+                        ;;
+                    rich)
+                        set_user_key GLASS_INTENSITY 85
+                        set_user_key GLASS_ENABLE yes
+                        set_user_key GLASS_PRESET rich
+                        set_user_key GLASS_BLUR yes
+                        set_user_key GLASS_OPACITY 55
+                        set_user_key GLASS_BORDER_OPACITY 32
+                        set_user_key GLASS_SHADOW 60
+                        set_user_key GLASS_RADIUS 16
+                        set_user_key GLASS_BLUR_RADIUS 8
+                        set_user_key GLASS_BLUR_PASSES 3
+                        set_user_key GLASS_SATURATION 135
+                        set_user_key GLASS_BLUR_NOISE 3
+                        set_user_key GLASS_BLUR_BRIGHTNESS 105
+                        set_user_key GLASS_BLUR_CONTRAST 112
+                        set_user_key GLASS_ANIM_MS 200
+                        set_user_key GLASS_GAPS 8
+                        set_user_key GLASS_DIM_INACTIVE 6
+                        set_user_key GLASS_BORDER_WIDTH 1
+                        set_user_key GLASS_SHEEN yes
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 9
+                        ;;
+                esac
                 ;;
             *) die "usage: luxenos-glass preset performance|balanced|rich|flat" ;;
         esac
