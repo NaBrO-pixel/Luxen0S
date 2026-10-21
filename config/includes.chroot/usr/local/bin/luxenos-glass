@@ -203,7 +203,7 @@ resolve_config() {
 
     : "${GLASS_ENABLE:=yes}" "${GLASS_THEME:=dark}" "${GLASS_PRESET:=balanced}"
     : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}" "${GLASS_SHEEN:=yes}" "${GLASS_HIGHLIGHT_OPACITY:=9}"
-    : "${GLASS_ACCENT:=#7aa2ff}" "${GLASS_FONT:=Inter}" "${GLASS_FONT_SIZE:=13}"
+    : "${GLASS_ACCENT:=#7aa2ff}" "${GLASS_TINT_DARK:=#141a26}" "${GLASS_TINT_LIGHT:=#f4f7fc}" "${GLASS_FONT:=Inter}" "${GLASS_FONT_SIZE:=13}"
     : "${GLASS_FALLBACK_OPACITY:=82}" "${GLASS_MIN_CONTRAST:=3.0}"
 
     enum GLASS_ENABLE yes yes no
@@ -213,6 +213,8 @@ resolve_config() {
     enum GLASS_SHEEN yes yes no
     enum GLASS_PRESET balanced performance balanced rich
     hexcolor GLASS_ACCENT '#7aa2ff'
+    hexcolor GLASS_TINT_DARK '#141a26'
+    hexcolor GLASS_TINT_LIGHT '#f4f7fc'
     if [ -z "$GLASS_FONT" ]; then GLASS_FONT=Inter; fi
 
     preset_values "$GLASS_PRESET"
@@ -277,11 +279,11 @@ resolve_config() {
 
     # Palette.
     if [ "$GLASS_THEME" = light ]; then
-        BASE='#f4f7fc' TEXT='#18202f' DIM='#586377' BACKDROP=0
+        BASE=$GLASS_TINT_LIGHT TEXT='#18202f' DIM='#586377' BACKDROP=0
         BORDER_HEX='#18202f' BOP=$(( GLASS_BORDER_OPACITY * 6 / 10 ))
         HI_PCT=$GLASS_HIGHLIGHT_OPACITY WARN='#a8730a' CRIT='#c8362d'
     else
-        BASE='#141a26' TEXT='#e8edf7' DIM='#94a0b8' BACKDROP=255
+        BASE=$GLASS_TINT_DARK TEXT='#e8edf7' DIM='#94a0b8' BACKDROP=255
         BORDER_HEX='#ffffff' BOP=$GLASS_BORDER_OPACITY
         HI_PCT=$GLASS_HIGHLIGHT_OPACITY WARN='#f0c05a' CRIT='#ff6b62'
     fi
