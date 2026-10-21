@@ -91,18 +91,6 @@ LOGROTATE
     log "Log rotation configured"
 fi
 
-# Create cron job as alternative to systemd timer (for systems without systemd)
-if command -v crontab >/dev/null 2>&1 && [ ! -d /etc/cron.d ]; then
-    log "Setting up cron fallback for automatic updates..."
-    cat > /etc/cron.d/luxenos-auto-updates << 'CRON'
-# LuxenOS Automatic Updates (cron fallback)
-# Runs daily at 2 AM if enabled in configuration
-0 2 * * * root [ "$(grep '^ENABLE_AUTO_UPDATES' /etc/luxenos/updater.conf | cut -d= -f2)" = "yes" ] && /usr/local/bin/luxenos-updater --auto
-CRON
-    chmod 644 /etc/cron.d/luxenos-auto-updates
-    log "Cron fallback configured"
-fi
-
 log "✓ Automatic update system configured successfully"
 log "  Configuration: /etc/luxenos/updater.conf"
 log "  Timer disabled by default (enable with: sudo luxenos-update-settings enable)"
