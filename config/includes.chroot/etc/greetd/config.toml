@@ -1,16 +1,9 @@
-# greetd config: run sway-greeter as the greeter and allow a sway session.
-# This file is installed into the target system (not used by the live installer).
-# The greeter provides a normal graphical login screen on Wayland.
+# Debian greetd configuration for the installed system.
+# Use greetd's bundled text greeter; the authenticated user's login shell
+# starts Sway via /etc/profile.d/luxenos-session.sh.
+[terminal]
+vt = 1
 
-[daemon]
-log = "/var/log/greetd.log"
-
-[default]
-timeout = 0  # do not auto-login
-
-[greeter]
-command = ["/usr/bin/sway-greeter"]
-
-[[session]]
-name = "sway"
-command = ["/usr/bin/sway"]
+[default_session]
+command = "agreety --cmd /bin/sh"
+user = "_greetd"
