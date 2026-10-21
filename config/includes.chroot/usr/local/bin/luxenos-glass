@@ -877,7 +877,7 @@ cmd_get() {
     # Palette names only need the config, not the compositor: quick and free
     # of side effects (used by the lock-screen wrapper).
     case ${1:-} in
-        base|text|accent|theme|preset|radius|reduce_motion) resolve_config ;;
+        base|text|accent|theme|preset|radius|reduce_motion|intensity) resolve_config ;;
         *) prepare ;;
     esac
     case ${1:-} in
