@@ -1037,7 +1037,8 @@ case "${1:-}" in
     get) cmd_get "${2:-}" ;;
     reset)
         if [ -f "$USER_CONF" ]; then mv -f "$USER_CONF" "$USER_CONF.bak"; fi
-        cmd_apply; reload_ui
+        cmd_apply || exit $?
+        reload_ui
         ;;
     status) cmd_status ;;
     namespaces) cmd_namespaces ;;
