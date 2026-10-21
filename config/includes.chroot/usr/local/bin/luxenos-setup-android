@@ -1,61 +1,76 @@
 #!/bin/sh
-# luxenos-setup-android - post-boot Android (Waydroid) setup: starts the
-# session, installs Aurora Store, and explains the optional Play Store step.
+# luxenos-setup-android - wait for Waydroid's first initialization and start it.
 
+set -u
 APK=/usr/share/luxenos/apks/AuroraStore.apk
+BASE_PROP=/var/lib/waydroid/waydroid_base.prop
 
-echo ""
-echo "=== LuxenOS: Android / Play Store setup ==="
-echo ""
+echo
+echo "=== LuxenOS: Android setup ==="
+echo
 
 if ! command -v waydroid >/dev/null 2>&1; then
     echo "Waydroid is not installed on this system."
     exit 1
 fi
 
-# Wait for Waydroid session to be running
-echo "Starting Waydroid session if needed..."
-if ! waydroid status >/dev/null 2>&1; then
-    waydroid session start >/dev/null 2>&1 || true
+if [ ! -s "$BASE_PROP" ]; then
+    echo "Waiting for first-boot Waydroid initialization (up to 10 minutes)..."
+    waited=0
+    while [ "$waited" -lt 600 ] && [ ! -s "$BASE_PROP" ]; do
+        if command -v systemctl >/dev/null 2>&1 &&
+           systemctl is-failed --quiet waydroid-first-init.service; then
+            echo "Waydroid initialization failed."
+            echo "Check: sudo systemctl status waydroid-first-init.service"
+            echo "Logs: sudo journalctl -u waydroid-first-init.service"
+            exit 1
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    if [ ! -s "$BASE_PROP" ]; then
+        echo "Waydroid is not initialized yet."
+        echo "Check: sudo systemctl status waydroid-first-init.service"
+        echo "Logs: sudo journalctl -u waydroid-first-init.service"
+        exit 1
+    fi
 fi
-sleep 3
 
-# Install Aurora Store (works without Google account, no certification needed)
-echo "Installing Aurora Store..."
+echo "Starting Waydroid session..."
+if ! waydroid session start; then
+    echo "Could not start the Waydroid session."
+    echo "Check: waydroid status"
+    echo "Logs: waydroid log"
+    exit 1
+fi
+
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+    status=$(waydroid status 2>&1 || true)
+    if printf '%s\n' "$status" | grep -qiE 'Session:[[:space:]]*RUNNING'; then
+        break
+    fi
+    sleep 2
+    attempt=$((attempt + 1))
+done
+if [ "$attempt" -ge 30 ]; then
+    echo "Waydroid session did not reach RUNNING state."
+    waydroid status || true
+    echo "Check logs with: waydroid log"
+    exit 1
+fi
+
+echo "Waydroid session is running."
 if [ -f "$APK" ]; then
+    echo "Installing Aurora Store..."
     if waydroid app install "$APK"; then
-        echo "Aurora Store installed. Launch it from the Waydroid UI to download any Play Store app."
+        echo "Aurora Store installed. Open it from the Waydroid UI."
     else
-        echo "Aurora Store install failed - make sure Waydroid is running (waydroid session start)"
+        echo "Aurora Store installation failed."
+        echo "Retry with: waydroid app install $APK"
+        exit 1
     fi
 else
-    echo "Aurora Store APK not found. You can download it from:"
-    echo "  https://f-droid.org/packages/com.aurora.store/"
+    echo "Aurora Store was not bundled in this image."
+    echo "The Android container is ready; no APK installation was attempted."
 fi
-
-cat <<'TEXT'
-
-=== Optional: Enable official Google Play Store ===
-
-Aurora Store covers most use cases. If you also want the official
-Play Store (requires a Google account), do the following:
-
-1. Get your Waydroid Android ID:
-     sudo waydroid shell
-     sqlite3 /data/data/com.google.android.gsf/databases/gservices.db \
-       "select * from main where name='android_id';"
-     exit
-
-2. Visit this URL on any browser and enter that Android ID:
-     https://www.google.com/android/uncertified
-
-3. Restart Waydroid:
-     waydroid session stop
-     waydroid session start
-
-4. Open Play Store in the Waydroid UI and sign in with your Google account.
-
-Note: Google certification can take up to 10 minutes to activate.
-Note: this step only applies to GAPPS images. VANILLA images do not
-include Google Play Services and cannot use the official Play Store.
-TEXT
