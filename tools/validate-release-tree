@@ -197,7 +197,25 @@ grep -qx 'GLASS_INTENSITY=63' "$glass_home/.config/luxenos/glass.conf" \
     LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
     sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)" = 63 ] \
     || { rm -rf "$glass_home"; fail "Liquid Glass intensity could not be read back"; }
-rm -rf "$glass_home"
+# The Accessibility slider must persist derived values, and preset selection
+# must clear its generated overrides rather than leaving the slider stuck.
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass intensity 75 >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "Liquid Glass intensity 75 could not be applied"; }
+glass_user_conf="$glass_home/.config/luxenos/glass.conf"
+grep -qx "GLASS_INTENSITY=75" "$glass_user_conf" \
+    || { rm -rf "$glass_home"; fail "intensity slider did not persist GLASS_INTENSITY"; }
+grep -qx "GLASS_RADIUS=13" "$glass_user_conf" \
+    || { rm -rf "$glass_home"; fail "intensity slider did not derive the expected corner radius"; }
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass preset balanced >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "balanced preset could not replace slider settings"; }
+if grep -q "^GLASS_INTENSITY=" "$glass_user_conf"; then
+    rm -rf "$glass_home"
+    fail "choosing a preset did not clear the slider intensity override"
+fi
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
     desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop \
