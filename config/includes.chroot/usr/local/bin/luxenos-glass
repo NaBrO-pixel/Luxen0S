@@ -609,7 +609,7 @@ CSS
 # (or edit this file / use nwg-look and luxenos-glass will leave it alone).
 gtk-theme-name=Adwaita
 gtk-application-prefer-dark-theme=$dark
-gtk-font-name=$GLASS_FONT 10
+gtk-font-name=$GLASS_FONT $GLASS_FONT_SIZE
 gtk-enable-animations=$anim
 INI
     else
