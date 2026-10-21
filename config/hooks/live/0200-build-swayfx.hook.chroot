@@ -1,0 +1,50 @@
+#!/bin/sh
+# Build a pinned SwayFX release for Debian 13 (Trixie).
+# SwayFX 0.5.3 uses SceneFX 0.4.1 and wlroots 0.19.0; keep these versions
+# together to avoid ABI/API mismatches with the distro's wlroots 0.18.
+set -eu
+
+log() { echo "[LuxenOS SwayFX] $*" >&2; }
+export DEBIAN_FRONTEND=noninteractive
+
+log "Installing SwayFX build dependencies"
+apt-get update
+apt-get install -y --no-install-recommends \
+    build-essential git meson ninja-build pkg-config cmake scdoc \
+    wayland-protocols libwayland-dev libpcre2-dev libjson-c-dev \
+    libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev \
+    libdrm-dev libgbm-dev libinput-dev libseat-dev libxkbcommon-dev \
+    libxcb-dri3-dev libxcb-present-dev libxcb-res0-dev \
+    libxcb-render-util0-dev libxcb-ewmh-dev libxcb-icccm4-dev \
+    libliftoff-dev libdisplay-info-dev liblcms2-dev libpixman-1-dev \
+    libgles2-mesa-dev hwdata libudev-dev libxcb-composite0-dev \
+    libxcb-xfixes0-dev libxcb-shape0-dev libxcb-xinput-dev \
+    libxcb-render0-dev libxcb-shm0-dev libxcb1-dev libx11-xcb-dev
+
+build_root="$(mktemp -d /tmp/luxenos-swayfx.XXXXXX)"
+cleanup() { rm -rf "$build_root"; }
+trap cleanup EXIT HUP INT TERM
+cd "$build_root"
+
+log "Fetching pinned SwayFX 0.5.3 sources"
+git clone --depth 1 --branch 0.5.3 https://github.com/WillPower3309/swayfx.git swayfx
+cd swayfx
+mkdir -p subprojects
+git clone --depth 1 --branch 0.4.1 https://github.com/wlrfx/scenefx.git subprojects/scenefx
+git clone --depth 1 --branch 0.19.0 https://gitlab.freedesktop.org/wlroots/wlroots.git subprojects/wlroots
+
+log "Configuring and compiling SwayFX (pinned SceneFX/wlroots subprojects)"
+meson setup build --prefix=/usr/local --buildtype=release
+ninja -C build
+DESTDIR=/tmp/luxenos-swayfx-stage ninja -C build install
+
+log "Installing SwayFX into /usr/local and refreshing library cache"
+cp -a /tmp/luxenos-swayfx-stage/usr/local/. /usr/local/
+ldconfig
+
+if ! /usr/local/bin/sway --version 2>&1 | grep -qi swayfx; then
+    log "ERROR: installed compositor does not identify itself as SwayFX"
+    /usr/local/bin/sway --version || true
+    exit 1
+fi
+log "Verified: $(/usr/local/bin/sway --version 2>&1 | head -n 1)"
