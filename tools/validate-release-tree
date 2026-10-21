@@ -178,6 +178,17 @@ for preset in performance balanced rich; do
     grep -q 'transition: none' "$glass_home/.config/luxenos/glass/waybar.css" \
         || { rm -rf "$glass_home"; fail "GLASS_REDUCE_MOTION=yes did not disable transitions ($preset)"; }
 done
+# Exercise the Accessibility slider end-to-end at its boundary and midpoint.
+for intensity in 0 50 100; do
+    HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+        LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+        sh config/includes.chroot/usr/local/bin/luxenos-glass intensity "$intensity" >/dev/null 2>&1 \
+        || { rm -rf "$glass_home"; fail "Liquid Glass intensity $intensity could not be applied"; }
+    actual=$(HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+        LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+        sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)
+    [ "$actual" = "$intensity" ] || { rm -rf "$glass_home"; fail "intensity getter returned '$actual' for $intensity"; }
+done
 rm -rf "$glass_home"
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
