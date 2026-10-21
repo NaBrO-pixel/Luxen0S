@@ -56,7 +56,7 @@ fi
 log "Wine present: $(wine --version 2>/dev/null || echo 'version query failed')"
 
 for f in /usr/local/bin/luxenos-glass /usr/local/bin/luxenos-waybar \
-         /usr/local/bin/luxenos-controls /usr/local/bin/luxenos-polkit-agent \
+         /usr/local/bin/luxenos-controls /usr/local/bin/luxenos-accessibility-settings /usr/local/bin/luxenos-polkit-agent \
          /usr/local/bin/luxenos-deb-install /usr/local/bin/luxenos-wine-open \
          /usr/local/bin/luxenos-session-init /usr/local/bin/luxenos-network \
          /usr/local/bin/luxenos-lock /usr/local/bin/luxenos-setup-android \
