@@ -4,7 +4,6 @@ Requires=luxenos-auto-update.service
 
 [Timer]
 # Run daily at 2 AM (system time)
-OnCalendar=daily
 OnCalendar=*-*-* 02:00:00
 
 # Run on boot if missed (e.g., system was off at 2 AM)

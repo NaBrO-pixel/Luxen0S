@@ -1,0 +1,16 @@
+#!/bin/sh
+# luxenos-sway-session - start Sway for greetd (the greeter compositor and the
+# user session wlgreet launches after login). greetd does not source
+# /etc/profile.d, so the software-renderer fallback from luxenos-session.sh is
+# repeated here: without it, machines with only Mesa's llvmpipe (most VMs) end
+# up with a greeter that never appears.
+export XDG_CURRENT_DESKTOP=sway XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=sway
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+if command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt -q --vm 2>/dev/null; then
+    export WLR_NO_HARDWARE_CURSORS=1
+fi
+# Prefer the bundled SwayFX; stock Sway is the packaged fallback.
+if [ -x /usr/local/bin/sway ]; then
+    exec /usr/local/bin/sway "$@"
+fi
+exec sway "$@"
