@@ -15,10 +15,15 @@ confirm() {
     [ "$ans" = "Yes" ]
 }
 
-choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 13
+if [ "${1:-}" = accessibility ]; then
+    exec sh /usr/local/bin/luxenos-accessibility-settings
+fi
+
+choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 16
 Network & Wi-Fi
 Sound
 Appearance (GTK theme)
+Settings: Accessibility
 Glass: Performance
 Glass: Balanced
 Glass: Rich
@@ -37,6 +42,7 @@ case $choice in
     "Network & Wi-Fi")          exec luxenos-network ;;
     "Sound")                    exec pavucontrol-qt ;;
     "Appearance (GTK theme)")   exec nwg-look ;;
+    "Settings: Accessibility")  exec sh /usr/local/bin/luxenos-accessibility-settings ;;
     "Glass: Performance")       exec luxenos-glass preset performance ;;
     "Glass: Balanced")          exec luxenos-glass preset balanced ;;
     "Glass: Rich")              exec luxenos-glass preset rich ;;

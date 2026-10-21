@@ -28,6 +28,7 @@
 # Usage:
 #   luxenos-glass apply [--files-only|--sway-only]
 #   luxenos-glass preset performance|balanced|rich|flat
+#   luxenos-glass intensity 0..100  (Accessibility: Liquid Glass slider)
 #   luxenos-glass theme dark|light
 #   luxenos-glass set GLASS_KEY VALUE
 #   luxenos-glass get NAME         (base, text, accent, opacity, ... see status)
@@ -201,19 +202,47 @@ resolve_config() {
     load_conf "$USER_CONF"
 
     : "${GLASS_ENABLE:=yes}" "${GLASS_THEME:=dark}" "${GLASS_PRESET:=balanced}"
-    : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}"
-    : "${GLASS_ACCENT:=#7aa2ff}" "${GLASS_FONT:=Inter}" "${GLASS_FONT_SIZE:=13}"
+    : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}" "${GLASS_SHEEN:=yes}" "${GLASS_HIGHLIGHT_OPACITY:=9}"
+    : "${GLASS_ACCENT:=#7aa2ff}" "${GLASS_TINT_DARK:=#141a26}" "${GLASS_TINT_LIGHT:=#f4f7fc}" "${GLASS_FONT:=Inter}" "${GLASS_FONT_SIZE:=13}"
     : "${GLASS_FALLBACK_OPACITY:=82}" "${GLASS_MIN_CONTRAST:=3.0}"
 
     enum GLASS_ENABLE yes yes no
     enum GLASS_THEME dark dark light
     enum GLASS_EFFECTS auto auto off
     enum GLASS_REDUCE_MOTION no yes no
+    enum GLASS_SHEEN yes yes no
     enum GLASS_PRESET balanced performance balanced rich
     hexcolor GLASS_ACCENT '#7aa2ff'
+    hexcolor GLASS_TINT_DARK '#141a26'
+    hexcolor GLASS_TINT_LIGHT '#f4f7fc'
     if [ -z "$GLASS_FONT" ]; then GLASS_FONT=Inter; fi
 
     preset_values "$GLASS_PRESET"
+    # Optional system GLASS_INTENSITY scales preset defaults. Explicit
+    # GLASS_* values remain authoritative over the calculated values.
+    if [ -n "${GLASS_INTENSITY:-}" ]; then
+        num GLASS_INTENSITY 0 100 55
+        _i=$GLASS_INTENSITY
+        P_OPACITY=$((90 - _i * 35 / 100))
+        P_BORDER_OPACITY=$((12 + _i * 20 / 100))
+        P_SHADOW=$((_i * 60 / 100))
+        P_RADIUS=$((4 + _i * 12 / 100))
+        if [ "$_i" -eq 0 ]; then P_OPACITY=100; P_BORDER_OPACITY=0; P_RADIUS=0; P_SHADOW=0; fi
+        P_BLUR_PASSES=$((1 + _i * 2 / 100))
+        P_SATURATION=$((100 + _i * 35 / 100))
+        P_BLUR_NOISE=$((_i * 3 / 100))
+        P_BLUR_BRIGHTNESS=$((100 + _i * 5 / 100))
+        P_BLUR_CONTRAST=$((100 + _i * 12 / 100))
+        P_ANIM_MS=$((_i * 2))
+        P_GAPS=$((3 + _i * 5 / 100))
+        P_DIM=$((_i * 6 / 100))
+        if [ "$_i" -le 10 ]; then P_BLUR=no; P_BLUR_RADIUS=0
+        else P_BLUR=yes; P_BLUR_RADIUS=$((1 + (_i - 11) * 7 / 89)); fi
+        if [ "$_i" -eq 0 ] && { [ ! -r "$USER_CONF" ] || ! grep -q "^GLASS_ENABLE=" "$USER_CONF"; }; then
+            GLASS_ENABLE=no
+        fi
+    fi
+
     : "${GLASS_BLUR:=$P_BLUR}" "${GLASS_OPACITY:=$P_OPACITY}"
     : "${GLASS_BORDER_OPACITY:=$P_BORDER_OPACITY}" "${GLASS_SHADOW:=$P_SHADOW}"
     : "${GLASS_RADIUS:=$P_RADIUS}" "${GLASS_BLUR_RADIUS:=$P_BLUR_RADIUS}"
@@ -239,6 +268,7 @@ resolve_config() {
     num GLASS_BORDER_WIDTH 0 6 1
     num GLASS_FONT_SIZE 8 24 13
     num GLASS_FALLBACK_OPACITY 0 100 82
+    num GLASS_HIGHLIGHT_OPACITY 0 30 9
 
     # MIN_CONTRAST may be decimal (e.g. 4.5); keep it as hundredths.
     case $GLASS_MIN_CONTRAST in
@@ -251,13 +281,13 @@ resolve_config() {
 
     # Palette.
     if [ "$GLASS_THEME" = light ]; then
-        BASE='#f4f7fc' TEXT='#18202f' DIM='#586377' BACKDROP=0
+        BASE=$GLASS_TINT_LIGHT TEXT='#18202f' DIM='#586377' BACKDROP=0
         BORDER_HEX='#18202f' BOP=$(( GLASS_BORDER_OPACITY * 6 / 10 ))
-        HI_PCT=55 WARN='#a8730a' CRIT='#c8362d'
+        HI_PCT=$GLASS_HIGHLIGHT_OPACITY WARN='#a8730a' CRIT='#c8362d'
     else
-        BASE='#141a26' TEXT='#e8edf7' DIM='#94a0b8' BACKDROP=255
+        BASE=$GLASS_TINT_DARK TEXT='#e8edf7' DIM='#94a0b8' BACKDROP=255
         BORDER_HEX='#ffffff' BOP=$GLASS_BORDER_OPACITY
-        HI_PCT=9 WARN='#f0c05a' CRIT='#ff6b62'
+        HI_PCT=$GLASS_HIGHLIGHT_OPACITY WARN='#f0c05a' CRIT='#ff6b62'
     fi
 }
 
@@ -272,9 +302,10 @@ resolve_effective() {
 
     OPA=$GLASS_OPACITY
     if [ "$GLASS_ENABLE" = no ]; then
-        OPA=100; GLASS_SHADOW=0; GLASS_ANIM_MS=0; SHEEN=0
+        OPA=100; GLASS_SHADOW=0; GLASS_ANIM_MS=0; SHEEN=0; R=0; BOP=0
     else
         SHEEN=1
+        if [ "$GLASS_SHEEN" = no ]; then SHEEN=0; fi
         # Without real blur the backdrop is not softened: panels get an
         # opacity floor so they stay legible.
         if [ "$BLUR_ON" = no ] && [ "$OPA" -lt "$GLASS_FALLBACK_OPACITY" ]; then
@@ -292,7 +323,7 @@ resolve_effective() {
     OPA_STRONG=$(min2 100 $(( OPA + 18 )))
     if [ "$GLASS_ENABLE" = no ]; then OPA_STRONG=100; fi
     SHADOW_A=$(( GLASS_SHADOW * 5 / 10 ))
-    R=$GLASS_RADIUS
+    if [ "$GLASS_ENABLE" = no ]; then R=0; else R=$GLASS_RADIUS; fi
     R_IN=$(( R > 4 ? R - 4 : 0 ))
     BAR_H=$(( GLASS_FONT_SIZE * 2 + 8 ))
 }
@@ -582,7 +613,7 @@ CSS
 # (or edit this file / use nwg-look and luxenos-glass will leave it alone).
 gtk-theme-name=Adwaita
 gtk-application-prefer-dark-theme=$dark
-gtk-font-name=$GLASS_FONT 10
+gtk-font-name=$GLASS_FONT $GLASS_FONT_SIZE
 gtk-enable-animations=$anim
 INI
     else
@@ -796,6 +827,75 @@ reload_ui() {
     return 0
 }
 
+clear_intensity_keys() {
+    [ -f "$USER_CONF" ] || return 0
+    tmp=$(mktemp "$CFG/luxenos/glass.conf.XXXXXX") || die "cannot write $CFG/luxenos"
+    CUR_TMP=$tmp
+    while IFS= read -r l || [ -n "$l" ]; do
+        case $l in
+            GLASS_ENABLE=*|GLASS_PRESET=*|GLASS_INTENSITY=*|GLASS_BLUR=*|GLASS_OPACITY=*|GLASS_BORDER_OPACITY=*|GLASS_SHADOW=*|GLASS_RADIUS=*|GLASS_BLUR_RADIUS=*|GLASS_BLUR_PASSES=*|GLASS_SATURATION=*|GLASS_BLUR_NOISE=*|GLASS_BLUR_BRIGHTNESS=*|GLASS_BLUR_CONTRAST=*|GLASS_ANIM_MS=*|GLASS_GAPS=*|GLASS_DIM_INACTIVE=*|GLASS_BORDER_WIDTH=*|GLASS_SHEEN=*|GLASS_HIGHLIGHT_OPACITY=*) ;;
+            *) printf '%s\n' "$l" ;;
+        esac
+    done < "$USER_CONF" > "$tmp"
+    mv -f "$tmp" "$USER_CONF" || die "cannot update $USER_CONF"
+    CUR_TMP=""
+}
+
+cmd_intensity() {
+    value=${1:-}
+    case $value in ''|*[!0-9]*) die "usage: luxenos-glass intensity 0..100" ;; esac
+    [ "$value" -ge 0 ] && [ "$value" -le 100 ] || die "intensity must be between 0 and 100"
+    mkdir -p "$CFG/luxenos" || die "cannot create $CFG/luxenos"
+    clear_intensity_keys
+    opacity=$((90 - value * 35 / 100))
+    border=$((12 + value * 20 / 100))
+    shadow=$((value * 60 / 100))
+    radius=$((4 + value * 12 / 100))
+    if [ "$value" -le 10 ]; then blur=no; blur_radius=0; else blur=yes; blur_radius=$((1 + (value - 11) * 7 / 89)); fi
+    passes=$((1 + value * 2 / 100))
+    saturation=$((100 + value * 35 / 100))
+    noise=$((value * 3 / 100))
+    brightness=$((100 + value * 5 / 100))
+    contrast=$((100 + value * 12 / 100))
+    anim=$((value * 2))
+    gaps=$((value * 8 / 100))
+    dim=$((value * 6 / 100))
+    fallback_opacity=$((88 - value * 23 / 100))
+    border_width=$((1 + value / 70))
+    highlight=$((value * 30 / 100))
+    if [ "$value" -eq 0 ]; then
+        enable=no; preset=performance; opacity=100; border=0; shadow=0; radius=0
+        blur=no; blur_radius=0; passes=1; saturation=100; noise=0
+        brightness=100; contrast=100; anim=0; gaps=0; dim=0
+        border_width=0; highlight=0; sheen=no
+    elif [ "$value" -lt 34 ]; then enable=yes; preset=performance; sheen=yes
+    elif [ "$value" -lt 67 ]; then enable=yes; preset=balanced; sheen=yes
+    else enable=yes; preset=rich; sheen=yes
+    fi
+    set_user_key GLASS_INTENSITY "$value"
+    set_user_key GLASS_ENABLE "$enable"
+    set_user_key GLASS_PRESET "$preset"
+    set_user_key GLASS_BLUR "$blur"
+    set_user_key GLASS_OPACITY "$opacity"
+    set_user_key GLASS_BORDER_OPACITY "$border"
+    set_user_key GLASS_SHADOW "$shadow"
+    set_user_key GLASS_RADIUS "$radius"
+    set_user_key GLASS_BLUR_RADIUS "$blur_radius"
+    set_user_key GLASS_BLUR_PASSES "$passes"
+    set_user_key GLASS_SATURATION "$saturation"
+    set_user_key GLASS_BLUR_NOISE "$noise"
+    set_user_key GLASS_BLUR_BRIGHTNESS "$brightness"
+    set_user_key GLASS_BLUR_CONTRAST "$contrast"
+    set_user_key GLASS_ANIM_MS "$anim"
+    set_user_key GLASS_GAPS "$gaps"
+    set_user_key GLASS_DIM_INACTIVE "$dim"
+    set_user_key GLASS_FALLBACK_OPACITY "$fallback_opacity"
+    set_user_key GLASS_BORDER_WIDTH "$border_width"
+    set_user_key GLASS_SHEEN "$sheen"
+    set_user_key GLASS_HIGHLIGHT_OPACITY "$highlight"
+    cmd_apply || return $?
+    reload_ui
+}
 set_user_key() {
     case $1 in GLASS_*) ;; *) die "not a glass key: $1" ;; esac
     case $1 in *[!A-Z0-9_]*) die "bad key: $1" ;; esac
@@ -823,7 +923,7 @@ cmd_get() {
     # Palette names only need the config, not the compositor: quick and free
     # of side effects (used by the lock-screen wrapper).
     case ${1:-} in
-        base|text|accent|theme|preset|radius) resolve_config ;;
+        base|text|accent|theme|preset|radius|reduce_motion|intensity) resolve_config ;;
         *) prepare ;;
     esac
     case ${1:-} in
@@ -834,11 +934,23 @@ cmd_get() {
         radius) printf '%s\n' "$GLASS_RADIUS" ;;
         theme) printf '%s\n' "$GLASS_THEME" ;;
         preset) printf '%s\n' "$GLASS_PRESET" ;;
+        reduce_motion) printf '%s\n' "$GLASS_REDUCE_MOTION" ;;
+        intensity)
+            if [ -r "$USER_CONF" ] && grep -q '^GLASS_INTENSITY=' "$USER_CONF"; then
+                sed -n 's/^GLASS_INTENSITY=//p' "$USER_CONF" | tail -n 1
+            elif [ "$GLASS_ENABLE" = no ]; then
+                echo 0
+            elif [ -n "${GLASS_INTENSITY:-}" ]; then
+                printf '%s\n' "$GLASS_INTENSITY"
+            else
+                case "$GLASS_PRESET" in performance) echo 25 ;; balanced) echo 55 ;; rich) echo 85 ;; *) echo 0 ;; esac
+            fi
+            ;;
         compositor) printf '%s\n' "$COMP" ;;
         effects) printf '%s\n' "$FX" ;;
         blur) printf '%s\n' "$BLUR_ON" ;;
         animation_ms) printf '%s\n' "$GLASS_ANIM_MS" ;;
-        *) die "unknown name '${1:-}' (base text accent opacity radius theme preset compositor effects blur animation_ms)" ;;
+        *) die "unknown name '${1:-}' (base text accent opacity radius theme preset intensity reduce_motion compositor effects blur animation_ms)" ;;
     esac
 }
 
@@ -857,6 +969,7 @@ border            ${BOP}% x ${GLASS_BORDER_WIDTH}px
 radius            ${R}px
 shadow            $GLASS_SHADOW
 animation         ${GLASS_ANIM_MS}ms  (reduce motion: $GLASS_REDUCE_MOTION)
+intensity          $(cmd_get intensity 2>/dev/null)%
 gaps              ${GLASS_GAPS}px
 accent            $GLASS_ACCENT
 font              $GLASS_FONT ${GLASS_FONT_SIZE}px
@@ -895,31 +1008,124 @@ case "${1:-}" in
         ;;
     preset)
         case "${2:-}" in
-            flat) set_user_key GLASS_ENABLE no ;;
-            performance|balanced|rich)
-                set_user_key GLASS_ENABLE yes
-                set_user_key GLASS_PRESET "$2"
+            flat|performance|balanced|rich)
+                clear_intensity_keys
+                case "$2" in
+                    flat)
+                        set_user_key GLASS_INTENSITY 0
+                        set_user_key GLASS_ENABLE no
+                        set_user_key GLASS_PRESET performance
+                        set_user_key GLASS_BLUR no
+                        set_user_key GLASS_OPACITY 100
+                        set_user_key GLASS_BORDER_OPACITY 0
+                        set_user_key GLASS_SHADOW 0
+                        set_user_key GLASS_RADIUS 0
+                        set_user_key GLASS_BLUR_RADIUS 0
+                        set_user_key GLASS_BLUR_PASSES 1
+                        set_user_key GLASS_SATURATION 100
+                        set_user_key GLASS_BLUR_NOISE 0
+                        set_user_key GLASS_BLUR_BRIGHTNESS 100
+                        set_user_key GLASS_BLUR_CONTRAST 100
+                        set_user_key GLASS_ANIM_MS 0
+                        set_user_key GLASS_GAPS 0
+                        set_user_key GLASS_DIM_INACTIVE 0
+                        set_user_key GLASS_BORDER_WIDTH 0
+                        set_user_key GLASS_SHEEN no
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 0
+                        ;;
+                    performance)
+                        set_user_key GLASS_INTENSITY 25
+                        set_user_key GLASS_ENABLE yes
+                        set_user_key GLASS_PRESET performance
+                        set_user_key GLASS_BLUR no
+                        set_user_key GLASS_OPACITY 88
+                        set_user_key GLASS_BORDER_OPACITY 18
+                        set_user_key GLASS_SHADOW 0
+                        set_user_key GLASS_RADIUS 8
+                        set_user_key GLASS_BLUR_RADIUS 0
+                        set_user_key GLASS_BLUR_PASSES 1
+                        set_user_key GLASS_SATURATION 100
+                        set_user_key GLASS_BLUR_NOISE 0
+                        set_user_key GLASS_BLUR_BRIGHTNESS 100
+                        set_user_key GLASS_BLUR_CONTRAST 100
+                        set_user_key GLASS_ANIM_MS 0
+                        set_user_key GLASS_GAPS 4
+                        set_user_key GLASS_DIM_INACTIVE 0
+                        set_user_key GLASS_BORDER_WIDTH 1
+                        set_user_key GLASS_SHEEN yes
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 9
+                        ;;
+                    balanced)
+                        set_user_key GLASS_INTENSITY 55
+                        set_user_key GLASS_ENABLE yes
+                        set_user_key GLASS_PRESET balanced
+                        set_user_key GLASS_BLUR yes
+                        set_user_key GLASS_OPACITY 68
+                        set_user_key GLASS_BORDER_OPACITY 26
+                        set_user_key GLASS_SHADOW 35
+                        set_user_key GLASS_RADIUS 12
+                        set_user_key GLASS_BLUR_RADIUS 5
+                        set_user_key GLASS_BLUR_PASSES 2
+                        set_user_key GLASS_SATURATION 115
+                        set_user_key GLASS_BLUR_NOISE 2
+                        set_user_key GLASS_BLUR_BRIGHTNESS 95
+                        set_user_key GLASS_BLUR_CONTRAST 95
+                        set_user_key GLASS_ANIM_MS 120
+                        set_user_key GLASS_GAPS 6
+                        set_user_key GLASS_DIM_INACTIVE 0
+                        set_user_key GLASS_BORDER_WIDTH 1
+                        set_user_key GLASS_SHEEN yes
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 9
+                        ;;
+                    rich)
+                        set_user_key GLASS_INTENSITY 85
+                        set_user_key GLASS_ENABLE yes
+                        set_user_key GLASS_PRESET rich
+                        set_user_key GLASS_BLUR yes
+                        set_user_key GLASS_OPACITY 55
+                        set_user_key GLASS_BORDER_OPACITY 32
+                        set_user_key GLASS_SHADOW 60
+                        set_user_key GLASS_RADIUS 16
+                        set_user_key GLASS_BLUR_RADIUS 8
+                        set_user_key GLASS_BLUR_PASSES 3
+                        set_user_key GLASS_SATURATION 135
+                        set_user_key GLASS_BLUR_NOISE 3
+                        set_user_key GLASS_BLUR_BRIGHTNESS 105
+                        set_user_key GLASS_BLUR_CONTRAST 112
+                        set_user_key GLASS_ANIM_MS 200
+                        set_user_key GLASS_GAPS 8
+                        set_user_key GLASS_DIM_INACTIVE 6
+                        set_user_key GLASS_BORDER_WIDTH 1
+                        set_user_key GLASS_SHEEN yes
+                        set_user_key GLASS_HIGHLIGHT_OPACITY 9
+                        ;;
+                esac
                 ;;
             *) die "usage: luxenos-glass preset performance|balanced|rich|flat" ;;
         esac
-        cmd_apply; reload_ui
+        cmd_apply || exit $?; reload_ui
+        ;;
+    intensity)
+        [ $# -eq 2 ] || die "usage: luxenos-glass intensity 0..100"
+        cmd_intensity "$2" || exit $?
         ;;
     theme)
         case "${2:-}" in
             dark|light) set_user_key GLASS_THEME "$2" ;;
             *) die "usage: luxenos-glass theme dark|light" ;;
         esac
-        cmd_apply; reload_ui
+        cmd_apply || exit $?; reload_ui
         ;;
     set)
         [ $# -eq 3 ] || die "usage: luxenos-glass set GLASS_KEY VALUE"
         set_user_key "$2" "$3"
-        cmd_apply; reload_ui
+        cmd_apply || exit $?; reload_ui
         ;;
     get) cmd_get "${2:-}" ;;
     reset)
         if [ -f "$USER_CONF" ]; then mv -f "$USER_CONF" "$USER_CONF.bak"; fi
-        cmd_apply; reload_ui
+        cmd_apply || exit $?
+        reload_ui
         ;;
     status) cmd_status ;;
     namespaces) cmd_namespaces ;;

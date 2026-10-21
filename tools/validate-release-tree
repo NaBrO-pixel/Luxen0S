@@ -94,6 +94,9 @@ check_file config/includes.chroot/etc/skel/.config/gtk-4.0/gtk.css
 check_file config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy
 check_file config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop
 check_file config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop
+check_file config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop
+check_file config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
+check_shell_syntax config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
 for script in \
     config/includes.chroot/usr/local/bin/luxenos-glass \
     config/includes.chroot/usr/local/bin/luxenos-waybar \
@@ -171,6 +174,43 @@ for preset in performance balanced rich; do
     grep -q 'transition: none' "$glass_home/.config/luxenos/glass/waybar.css" \
         || { rm -rf "$glass_home"; fail "GLASS_REDUCE_MOTION=yes did not disable transitions ($preset)"; }
 done
+# Exercise the Accessibility slider end-to-end at its boundary and midpoint.
+for intensity in 0 50 100; do
+    HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+        LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+        sh config/includes.chroot/usr/local/bin/luxenos-glass intensity "$intensity" >/dev/null 2>&1 \
+        || { rm -rf "$glass_home"; fail "Liquid Glass intensity $intensity could not be applied"; }
+    actual=$(HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+        LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+        sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)
+    [ "$actual" = "$intensity" ] || { rm -rf "$glass_home"; fail "intensity getter returned '$actual' for $intensity"; }
+done
+
+# A configured system-wide intensity must drive the generated theme when no
+# per-user override exists.
+system_glass_conf="$glass_home/system-glass.conf"
+sed 's/^#GLASS_INTENSITY=55$/GLASS_INTENSITY=100/' config/includes.chroot/etc/luxenos/glass.conf > "$system_glass_conf"
+rm -f "$glass_home/.config/luxenos/glass.conf"
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF="$system_glass_conf" \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass apply --files-only >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "system-wide GLASS_INTENSITY default failed"; }
+actual=$(HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF="$system_glass_conf" \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)
+[ "$actual" = 100 ] || { rm -rf "$glass_home"; fail "system intensity getter returned '$actual' instead of 100"; }
+grep -q 'border-radius: 16px' "$glass_home/.config/luxenos/glass/waybar.css" \
+    || { rm -rf "$glass_home"; fail "system intensity did not affect generated corner radius"; }
+
+# Preset selection should replace slider-owned values with its exact preset.
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass intensity 75 >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "Liquid Glass intensity 75 could not be applied"; }
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass preset balanced >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "balanced preset could not be applied after slider"; }
+grep -qx 'GLASS_INTENSITY=55' "$glass_home/.config/luxenos/glass.conf" \
+    || { rm -rf "$glass_home"; fail "balanced preset did not reset slider value"; }
+grep -qx 'GLASS_RADIUS=12' "$glass_home/.config/luxenos/glass.conf" \
+    || { rm -rf "$glass_home"; fail "balanced preset did not restore its radius"; }
 rm -rf "$glass_home"
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
@@ -178,6 +218,8 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
         || fail "invalid luxenos-deb-install.desktop"
     desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop \
         || fail "invalid luxenos-wine-open.desktop"
+    desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop \
+        || fail "invalid luxenos-accessibility-settings.desktop"
 fi
 
 # Kiosk / installer boot experience (what the live disc itself boots into)

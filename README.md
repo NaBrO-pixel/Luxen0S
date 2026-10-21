@@ -55,7 +55,7 @@ One coherent translucent look - floating rounded Waybar pills, a glass
 launcher, glass notifications, thin light borders, soft highlights - tuned
 from one file: `/etc/luxenos/glass.conf`.
 
-| | Stock Sway (what the ISO ships) | SwayFX (optional) |
+| | Stock Sway fallback | SwayFX (bundled by the ISO build) |
 | --- | --- | --- |
 | Translucent panels, borders, accent, sheen | yes | yes |
 | Rounded panels (Waybar/wofi/dunst/GTK) | yes (CSS) | yes |
@@ -64,9 +64,13 @@ from one file: `/etc/luxenos/glass.conf`.
 | Layer effects (bar/launcher/notification blur + shadows) | no | yes |
 | Dimmed inactive windows | no | yes (`rich`) |
 
-Nothing is assumed: `luxenos-glass` asks the *running* compositor whether it
-accepts SwayFX-only commands, and applies every setting independently, so one
-unsupported effect never stops the rest. Text is never left unreadable:
+The ISO build compiles SwayFX 0.5.3 with its matching SceneFX 0.4.1 and wlroots
+0.19.0 in `config/hooks/live/0200-build-swayfx.hook.chroot`. The hook verifies
+the resulting compositor and fails the image build if SwayFX was not installed.
+Stock Debian Sway remains installed as a recovery/fallback binary. At runtime,
+`luxenos-glass` asks the *running* compositor whether it accepts SwayFX-only
+commands, and applies every setting independently, so one unsupported effect
+never stops the rest. Text is never left unreadable:
 panel opacity is raised until text keeps the configured contrast
 (`GLASS_MIN_CONTRAST`) over the worst-case backdrop, whatever the preset.
 
@@ -79,12 +83,9 @@ panel opacity is raised until text keeps the configured contrast
 | `rich` | radius 8, 3 passes | deep | 55% | 200 ms | radius 16, punchier blur colour, inactive windows dimmed |
 | `flat` (command only) | off | off | 100% | none | no glass at all |
 
-**Configuration.** System defaults: `/etc/luxenos/glass.conf` (documented,
-every key explained). Your overrides: `~/.config/luxenos/glass.conf`, same
-format, wins over the system file. The file is parsed, not sourced; invalid
-values are reported and replaced by safe defaults. Missing files are fine.
+**Graphical accessibility settings.** Open **Super+C → Settings: Accessibility** or launch **Accessibility Settings** from the app launcher. The 0–100 Liquid Glass slider adjusts opacity, blur strength, border visibility, shadows, corner radius, saturation, spacing and animation. Lower values are simpler and lighter on the GPU; 0 disables glass, while 100 applies the strongest available treatment. The same screen has a **Reduce motion** toggle and a reset option. Changes are saved per user and applied immediately; the system defaults in `/etc/luxenos/glass.conf` remain unchanged. Real compositor blur and rounded window corners require SwayFX; stock Sway fallback keeps panels more opaque for readability.
 
-**Accessibility.** `GLASS_REDUCE_MOTION=yes` sets all transitions to zero
+**Reduced motion.** `GLASS_REDUCE_MOTION=yes` sets all transitions to zero
 (bar, launcher, GTK `enable-animations`). Hover and focus colours still change
 instantly, so feedback is kept.
 
@@ -401,12 +402,12 @@ luxenos-glass apply --debug # shows every effect the compositor accepted/refused
 swaymsg 'blur_radius 5'     # SwayFX: success. Stock Sway: "Unknown/invalid command"
 ```
 
-The ISO ships **stock Debian Sway**. SwayFX is an optional drop-in replacement
-for the `sway` binary that is not in the Debian archive; LuxenOS does not
-build or bundle it. If you install one, it must be built against the wlroots
-it names (SwayFX's current `main` requires wlroots 0.20, so pick a release
-matching the wlroots your Debian ships). Log out and back in; no LuxenOS
-file changes. Blur is the most expensive effect on old GPUs: use
+The ISO build bundles **SwayFX 0.5.3** as `/usr/local/bin/sway`, built with
+SceneFX 0.4.1 and wlroots 0.19.0 by `config/hooks/live/0200-build-swayfx.hook.chroot`.
+The greetd compositor explicitly launches that binary; the Debian `sway`
+package is retained as a fallback. The hook verifies the installed binary and
+fails the ISO build if the SwayFX build is unsuccessful. Blur is the most
+expensive effect on old GPUs: use
 `luxenos-glass preset performance`, or `GLASS_EFFECTS=off`.
 
 Layer effects (bar/launcher/notification blur) are matched by layer-shell
@@ -429,7 +430,7 @@ for programs that are installed; override with `GLASS_NS_BAR`,
 | Session plumbing | `dbus-user-session` `dbus-bin` `procps` | env export, single-instance checks | mandatory |
 | Network | `network-manager` (base) + `network-manager-gnome` (`nm-applet`, `nm-connection-editor`) | Wi-Fi/Ethernet UI and password prompts | mandatory for the network tray; without it `luxenos-network` falls back to `nmtui` |
 | GTK theme tools | `nwg-look`, `swappy`, `grim`, `slurp` | Controls menu, screenshots | optional |
-| SwayFX | not in Debian | blur, rounded windows, shadows | optional, SwayFX-only |
+| SwayFX | built from pinned upstream sources by the ISO hook | blur, rounded windows, shadows | bundled |
 
 `nm-applet` is started once by `luxenos-session-init`, only if
 NetworkManager is running. The Waybar network module only shows status; its
@@ -440,14 +441,16 @@ applet.
 
 **The greetd login appears, but Sway does not start after authentication.**
 Check `systemctl status greetd` and `journalctl -u greetd -b`. Verify
-`/etc/greetd/config.toml` launches `/usr/bin/sway --config /etc/greetd/sway-config`,
+`/etc/greetd/config.toml` launches `/usr/local/bin/sway --config /etc/greetd/sway-config`,
 that `wlgreet` is installed, and ensure Sway and its
 Wayland dependencies are installed. If Sway exits immediately, try running
 `sway` from a separate TTY and inspect `journalctl -b` for GPU/Mesa errors.
 
 **No blur / rounded windows.**
-Expected on stock Sway. `luxenos-glass status` shows `compositor sway` and
-`compositor fx no`; see "Is SwayFX active?" above.
+Check `luxenos-glass status` for `compositor fx yes` and run
+`luxenos-glass apply --debug`. The ISO build should fail if SwayFX did not
+compile; if this appears after installation, check whether `/usr/local/bin/sway`
+is present and inspect the build log.
 
 **Bar, launcher or notifications look unstyled.**
 ```sh

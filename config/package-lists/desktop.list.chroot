@@ -7,8 +7,9 @@
 # dunst foot polkit agent + pkexec/polkitd, zenity, fonts, adwaita-icon-theme,
 # network-manager-gnome (base list: nm-applet, nm-connection-editor).
 # Optional/nice-to-have: nwg-look, swappy, grim/slurp, thunar/tumbler.
-# SwayFX (blur, rounded corners, shadows) is optional and NOT in Debian; the
-# glass theme detects it at runtime and falls back to stock Sway.
+# SwayFX is built from pinned upstream sources by
+# config/hooks/live/0200-build-swayfx.hook.chroot; stock Sway remains installed
+# as a package fallback, while /usr/local/bin takes priority in the user PATH.
 sway
 swaylock
 swayidle
