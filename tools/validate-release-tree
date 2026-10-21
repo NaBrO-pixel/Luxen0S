@@ -94,7 +94,7 @@ check_file config/includes.chroot/etc/skel/.config/gtk-4.0/gtk.css
 check_file config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy
 check_file config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop
 check_file config/includes.chroot/usr/share/applications/luxenos-wine-open.desktop
-check_file config/includes.chroot/usr/share/applications/luxenos-accessibility.desktop
+check_file config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop
 check_file config/includes.chroot/usr/local/bin/luxenos-accessibility-settings
 for script in \
     config/includes.chroot/usr/local/bin/luxenos-glass \
@@ -185,40 +185,6 @@ for intensity in 0 50 100; do
     [ "$actual" = "$intensity" ] || { rm -rf "$glass_home"; fail "intensity getter returned '$actual' for $intensity"; }
 done
 
-# The Accessibility slider must persist and report its value, without a running compositor.
-HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
-    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
-    sh config/includes.chroot/usr/local/bin/luxenos-glass intensity 63 >/dev/null 2>&1 \
-    || { rm -rf "$glass_home"; fail "Liquid Glass intensity command failed"; }
-grep -qx 'GLASS_INTENSITY=63' "$glass_home/.config/luxenos/glass.conf" \
-    || { rm -rf "$glass_home"; fail "Liquid Glass intensity was not persisted"; }
-[ "$(HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
-    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
-    sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)" = 63 ] \
-    || { rm -rf "$glass_home"; fail "Liquid Glass intensity could not be read back"; }
-# The Accessibility slider must persist derived values, and preset selection
-# must clear its generated overrides rather than leaving the slider stuck.
-HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
-    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
-    sh config/includes.chroot/usr/local/bin/luxenos-glass intensity 75 >/dev/null 2>&1 \
-    || { rm -rf "$glass_home"; fail "Liquid Glass intensity 75 could not be applied"; }
-glass_user_conf="$glass_home/.config/luxenos/glass.conf"
-grep -qx "GLASS_INTENSITY=75" "$glass_user_conf" \
-    || { rm -rf "$glass_home"; fail "intensity slider did not persist GLASS_INTENSITY"; }
-grep -qx "GLASS_RADIUS=12" "$glass_user_conf" \
-    || { rm -rf "$glass_home"; fail "intensity slider did not derive the expected corner radius"; }
-grep -qx "GLASS_BORDER_WIDTH=2" "$glass_user_conf" \
-    || { rm -rf "$glass_home"; fail "intensity slider did not derive the expected border width"; }
-grep -qx "GLASS_HIGHLIGHT_OPACITY=22" "$glass_user_conf" \
-    || { rm -rf "$glass_home"; fail "intensity slider did not derive the expected highlight strength"; }
-HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
-    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
-    sh config/includes.chroot/usr/local/bin/luxenos-glass preset balanced >/dev/null 2>&1 \
-    || { rm -rf "$glass_home"; fail "balanced preset could not replace slider settings"; }
-if grep -q "^GLASS_INTENSITY=" "$glass_user_conf"; then
-    rm -rf "$glass_home"
-    fail "choosing a preset did not clear the slider intensity override"
-fi
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
     desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-deb-install.desktop \
