@@ -167,13 +167,12 @@ access, records the BIOS GRUB disk, and rebuilds the initramfs. A final
 shellprocess step enables greetd for the installed system.
 
 **3. Installed system.**
-No `boot=live`, no kiosk. You log in at the tty1 console;
-`/etc/profile.d/luxenos-session.sh` starts Sway with your
-`~/.config/sway/config` (copied from `/etc/skel`), which runs
+No `boot=live`, no kiosk. `greetd` starts Debian's bundled `agreety` login
+prompt on tty1; after authentication, it launches Sway with your
+`~/.config/sway/config` (copied from `/etc/skel`). That config starts
 `luxenos-glass`, Waybar, `luxenos-session-init` (polkit agent, dunst,
-nm-applet), and the rest. Opt out of the autostart with
-`touch ~/.config/luxenos/no-autostart`. Hardening (AppArmor, UFW,
-unattended-upgrades) and the Waydroid first-boot service belong to the
+nm-applet), and the rest. Hardening (AppArmor, UFW,
+`unattended-upgrades`) and the Waydroid first-boot service belong to the
 installed system.
 
 The installer-to-installed conversion (steps 2-3) has not been exercised in a
