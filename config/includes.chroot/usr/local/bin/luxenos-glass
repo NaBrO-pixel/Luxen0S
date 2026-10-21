@@ -877,7 +877,7 @@ cmd_get() {
     # Palette names only need the config, not the compositor: quick and free
     # of side effects (used by the lock-screen wrapper).
     case ${1:-} in
-        base|text|accent|theme|preset|radius) resolve_config ;;
+        base|text|accent|theme|preset|radius|reduce_motion) resolve_config ;;
         *) prepare ;;
     esac
     case ${1:-} in
@@ -888,6 +888,7 @@ cmd_get() {
         radius) printf '%s\n' "$GLASS_RADIUS" ;;
         theme) printf '%s\n' "$GLASS_THEME" ;;
         preset) printf '%s\n' "$GLASS_PRESET" ;;
+        reduce_motion) printf '%s\n' "$GLASS_REDUCE_MOTION" ;;
         intensity)
             if [ -r "$USER_CONF" ] && grep -q '^GLASS_INTENSITY=' "$USER_CONF"; then sed -n 's/^GLASS_INTENSITY=//p' "$USER_CONF" | tail -n 1
             else case "$GLASS_PRESET" in performance) echo 25 ;; balanced) echo 55 ;; rich) echo 85 ;; *) echo 0 ;; esac; fi
