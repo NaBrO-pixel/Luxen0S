@@ -33,8 +33,8 @@ snap, and switch between like anything else. Set up by
 `config/hooks/live/0100-install-waydroid.hook.chroot`:
 - Downloads and configures the Waydroid repo/package at build time.
 - Can bundle Aurora Store when `AURORA_STORE_URL` and its matching
-  `AURORA_STORE_SHA256` are provided at build time. The default GitHub Actions
-  workflow does not set these, so its images do not include the APK.
+  `AURORA_STORE_SHA256` are provided at build time. Defaults pin Aurora Store
+  4.8.4 (code 76) from IzzyOnDroid; the build verifies its SHA-256 before bundling it.
 - Creates a one-shot systemd service that initializes the Android image on
   the *installed* system's first real boot.
 - `luxenos-setup-android` (also in the app launcher as "Android Setup")
@@ -167,8 +167,8 @@ access, records the BIOS GRUB disk, and rebuilds the initramfs. A final
 shellprocess step enables greetd for the installed system.
 
 **3. Installed system.**
-No `boot=live`, no kiosk. `greetd` starts Debian's bundled `agreety` login
-prompt on tty1; after authentication, it launches Sway with your
+No `boot=live`, no kiosk. `greetd` starts the graphical `wlgreet` login screen inside a minimal Sway
+compositor on tty1; after authentication, it launches your normal Sway session with your
 `~/.config/sway/config` (copied from `/etc/skel`). That config starts
 `luxenos-glass`, Waybar, `luxenos-session-init` (polkit agent, dunst,
 nm-applet), and the rest. Hardening (AppArmor, UFW,
@@ -440,7 +440,8 @@ applet.
 
 **The greetd login appears, but Sway does not start after authentication.**
 Check `systemctl status greetd` and `journalctl -u greetd -b`. Verify
-`/etc/greetd/config.toml` uses `agreety --cmd sway`, and ensure Sway and its
+`/etc/greetd/config.toml` launches `/usr/bin/sway --config /etc/greetd/sway-config`,
+that `wlgreet` is installed, and ensure Sway and its
 Wayland dependencies are installed. If Sway exits immediately, try running
 `sway` from a separate TTY and inspect `journalctl -b` for GPU/Mesa errors.
 
