@@ -24,8 +24,8 @@ if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ] \
     # Machines without a working GPU driver (most VMs, brand-new GPUs) only
     # have Mesa's software renderer (llvmpipe), which wlroots refuses unless
     # told otherwise -- Sway then exits and the console is all you see. Has
-    # no effect when a hardware renderer is available.
-    # hardware cursor.
+    # no effect when a hardware renderer is available. VMs also get the
+    # software cursor.
     export WLR_RENDERER_ALLOW_SOFTWARE=1
     if command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt -q --vm 2>/dev/null; then
         export WLR_NO_HARDWARE_CURSORS=1
