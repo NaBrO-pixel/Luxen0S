@@ -15,7 +15,32 @@ confirm() {
     [ "$ans" = "Yes" ]
 }
 
-choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 13
+accessibility_settings() {
+    if ! command -v zenity >/dev/null 2>&1; then
+        printf 'Accessibility settings need zenity.\\n' >&2
+        return 1
+    fi
+    current=$(luxenos-glass get intensity 2>/dev/null || printf '55')
+    case $current in ''|*[!0-9]*) current=55 ;; esac
+    value=$(zenity --scale \
+        --title="Settings — Accessibility" \
+        --text="Liquid Glass intensity\\n\\nLess glass is more opaque and lighter on graphics. More glass adds translucency, blur, rounded corners, and shadows when SwayFX is available." \
+        --min-value=0 --max-value=100 --value="$current" --step=1 \
+        --width=480 --ok-label="Apply" 2>/dev/null) || return 0
+    case $value in ''|*[!0-9]*) return 0 ;; esac
+    luxenos-glass intensity "$value" || {
+        zenity --error --title="Accessibility settings" --text="Could not apply Liquid Glass intensity." 2>/dev/null
+        return 1
+    }
+    zenity --info --title="Accessibility settings" --text="Liquid Glass intensity set to $value%.\\n\\nIf blur is unavailable, LuxenOS keeps panels more opaque for readability." 2>/dev/null || true
+}
+
+if [ "${1:-}" = accessibility ]; then
+    accessibility_settings
+    exit $?
+fi
+
+choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 14
 Network & Wi-Fi
 Sound
 Appearance (GTK theme)
