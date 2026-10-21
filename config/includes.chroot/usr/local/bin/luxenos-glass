@@ -238,7 +238,9 @@ resolve_config() {
         P_DIM=$((_i * 6 / 100))
         if [ "$_i" -le 10 ]; then P_BLUR=no; P_BLUR_RADIUS=0
         else P_BLUR=yes; P_BLUR_RADIUS=$((1 + (_i - 11) * 7 / 89)); fi
-        if [ "$_i" -eq 0 ]; then GLASS_ENABLE=no; fi
+        if [ "$_i" -eq 0 ] && { [ ! -r "$USER_CONF" ] || ! grep -q "^GLASS_ENABLE=" "$USER_CONF"; }; then
+            GLASS_ENABLE=no
+        fi
     fi
 
     : "${GLASS_BLUR:=$P_BLUR}" "${GLASS_OPACITY:=$P_OPACITY}"
