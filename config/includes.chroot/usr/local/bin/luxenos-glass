@@ -216,6 +216,28 @@ resolve_config() {
     if [ -z "$GLASS_FONT" ]; then GLASS_FONT=Inter; fi
 
     preset_values "$GLASS_PRESET"
+    # Optional system GLASS_INTENSITY scales preset defaults. Explicit
+    # GLASS_* values remain authoritative over the calculated values.
+    if [ -n "${GLASS_INTENSITY:-}" ]; then
+        num GLASS_INTENSITY 0 100 55
+        _i=$GLASS_INTENSITY
+        P_OPACITY=$((90 - _i * 35 / 100))
+        P_BORDER_OPACITY=$((12 + _i * 20 / 100))
+        P_SHADOW=$((_i * 60 / 100))
+        P_RADIUS=$((4 + _i * 12 / 100))
+        P_BLUR_PASSES=$((1 + _i * 2 / 100))
+        P_SATURATION=$((100 + _i * 35 / 100))
+        P_BLUR_NOISE=$((_i * 3 / 100))
+        P_BLUR_BRIGHTNESS=$((100 + _i * 5 / 100))
+        P_BLUR_CONTRAST=$((100 + _i * 12 / 100))
+        P_ANIM_MS=$((_i * 2))
+        P_GAPS=$((3 + _i * 5 / 100))
+        P_DIM=$((_i * 6 / 100))
+        if [ "$_i" -le 10 ]; then P_BLUR=no; P_BLUR_RADIUS=0
+        else P_BLUR=yes; P_BLUR_RADIUS=$((1 + (_i - 11) * 7 / 89)); fi
+        if [ "$_i" -eq 0 ]; then GLASS_ENABLE=no; fi
+    fi
+
     : "${GLASS_BLUR:=$P_BLUR}" "${GLASS_OPACITY:=$P_OPACITY}"
     : "${GLASS_BORDER_OPACITY:=$P_BORDER_OPACITY}" "${GLASS_SHADOW:=$P_SHADOW}"
     : "${GLASS_RADIUS:=$P_RADIUS}" "${GLASS_BLUR_RADIUS:=$P_BLUR_RADIUS}"
