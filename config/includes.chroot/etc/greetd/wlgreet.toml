@@ -1,4 +1,4 @@
-command = "sway"
+command = "/usr/local/bin/luxenos-sway-session"
 outputMode = "all"
 scale = 1
 
