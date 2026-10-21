@@ -887,7 +887,7 @@ cmd_intensity() {
     set_user_key GLASS_BORDER_WIDTH "$border_width"
     set_user_key GLASS_SHEEN "$sheen"
     set_user_key GLASS_HIGHLIGHT_OPACITY "$highlight"
-    cmd_apply
+    cmd_apply || return $?
     reload_ui
 }
 set_user_key() {
@@ -1032,7 +1032,7 @@ case "${1:-}" in
     set)
         [ $# -eq 3 ] || die "usage: luxenos-glass set GLASS_KEY VALUE"
         set_user_key "$2" "$3"
-        cmd_apply; reload_ui
+        cmd_apply || exit $?; reload_ui
         ;;
     get) cmd_get "${2:-}" ;;
     reset)
