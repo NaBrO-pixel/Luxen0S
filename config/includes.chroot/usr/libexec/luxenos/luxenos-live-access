@@ -4,17 +4,8 @@
 #
 # Run at boot by luxenos-live-access.service, before tty1 autologin. Writes,
 # into the live system's RAM overlay only:
-#   /etc/sudoers.d/luxenos-live-installer     sudo rule for that one command
+#   /etc/sudoers.d/luxenos-live-installer
 #   /etc/polkit-1/rules.d/49-luxenos-live-installer.rules
-#                                             the same for pkexec
-# LuxenOS does not rely on live-config's /etc/sudoers.d/live for this.
-#
-# Why this cannot reach an installed system: Calamares' unpackfs copies the
-# read-only squashfs, not the live overlay these files are written to; the
-# service only runs with boot=live on the kernel command line AND live-boot's
-# /run/live present; and Calamares' cleanup job deletes this script, the unit
-# and its enablement link (and, defensively, both generated files) from the
-# installed system (etc/calamares/modules/shellprocess-luxenos-cleanup.conf).
 
 set -eu
 
@@ -29,52 +20,59 @@ if ! grep -qw 'boot=live' /proc/cmdline 2>/dev/null || [ ! -d /run/live ]; then
     exit 0
 fi
 
-# Live user name: the build-time live user is authoritative. A kernel boot
-# parameter may override it only if it matches the generated live username.
-expected_user=$(cat /etc/luxenos-installer/live-username 2>/dev/null || echo user)
-user=$expected_user
-set -f  # split the command line into words, never glob them
-# shellcheck disable=SC2013
-for p in $(cat /proc/cmdline); do
-    case $p in
-        username=*|live-config.username=*)
-            candidate=${p#*username=}
-            case "$candidate" in
-                "$expected_user")
-                    user=$candidate
-                    ;;
-                *)
-                    log "ERROR: refusing live username '$candidate' (expected '$expected_user')"
-                    exit 1
-                    ;;
-            esac
-            ;;
-    esac
-done
-set +f
-case "$user" in
-    root|''|-*|*[!a-z0-9_-]*)
-        log "ERROR: refusing live user name '$user'"
+USERNAME_FILE=/etc/luxenos-installer/live-username
+if [ ! -r "$USERNAME_FILE" ]; then
+    log "ERROR: expected live username file is missing; refusing to grant access"
+    exit 1
+fi
+expected_user=$(cat "$USERNAME_FILE")
+case "$expected_user" in
+    ''|root|-*|*[!a-z0-9_-]*)
+        log "ERROR: invalid configured live username '$expected_user'"
         exit 1
         ;;
 esac
 
-# sudo: exactly the installer, as root, no password. Written under a name
-# sudo ignores (contains a dot), checked, then renamed into place.
+user=$expected_user
+set -f
+for p in $(cat /proc/cmdline); do
+    case $p in
+        username=*|live-config.username=*)
+            candidate=${p#*username=}
+            if [ "$candidate" != "$expected_user" ]; then
+                log "ERROR: refusing live username '$candidate' (expected '$expected_user')"
+                exit 1
+            fi
+            user=$candidate
+            ;;
+    esac
+done
+set +f
+
+if [ ! -x "$INSTALLER" ]; then
+    log "ERROR: installer command is missing or not executable: $INSTALLER"
+    exit 1
+fi
+
+# Never install a sudoers rule unless visudo is available and accepts it.
+if ! command -v visudo >/dev/null 2>&1; then
+    log "ERROR: visudo is unavailable; refusing to write sudoers rule"
+    exit 1
+fi
 mkdir -p /etc/sudoers.d
 tmp=$(mktemp /etc/sudoers.d/.luxenos-live-installer.XXXXXX)
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
 printf '# Live USB only, written at boot by luxenos-live-access.\n%s ALL=(root) NOPASSWD: %s\n' \
     "$user" "$INSTALLER" > "$tmp"
 chmod 0440 "$tmp"
-if command -v visudo >/dev/null 2>&1 && ! visudo -cqf "$tmp"; then
-    rm -f "$tmp"
+if ! visudo -cqf "$tmp"; then
     log "ERROR: generated sudoers rule failed visudo -c"
-else
-    mv -f "$tmp" "$SUDOERS"
-    log "sudo rule for '$user' -> $INSTALLER installed"
+    exit 1
 fi
+mv -f "$tmp" "$SUDOERS"
+trap - EXIT HUP INT TERM
+log "sudo rule for '$user' -> $INSTALLER installed"
 
-# polkit: pkexec of exactly the installer, for the live user's local session.
 mkdir -p /etc/polkit-1/rules.d
 cat > "$RULE.tmp" <<RULES
 // Live USB only, written at boot by luxenos-live-access.
