@@ -205,8 +205,12 @@ HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
 glass_user_conf="$glass_home/.config/luxenos/glass.conf"
 grep -qx "GLASS_INTENSITY=75" "$glass_user_conf" \
     || { rm -rf "$glass_home"; fail "intensity slider did not persist GLASS_INTENSITY"; }
-grep -qx "GLASS_RADIUS=13" "$glass_user_conf" \
+grep -qx "GLASS_RADIUS=12" "$glass_user_conf" \
     || { rm -rf "$glass_home"; fail "intensity slider did not derive the expected corner radius"; }
+grep -qx "GLASS_BORDER_WIDTH=2" "$glass_user_conf" \
+    || { rm -rf "$glass_home"; fail "intensity slider did not derive the expected border width"; }
+grep -qx "GLASS_HIGHLIGHT_OPACITY=22" "$glass_user_conf" \
+    || { rm -rf "$glass_home"; fail "intensity slider did not derive the expected highlight strength"; }
 HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
     LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
     sh config/includes.chroot/usr/local/bin/luxenos-glass preset balanced >/dev/null 2>&1 \
