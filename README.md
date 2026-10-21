@@ -163,8 +163,8 @@ system: `removeuser` deletes the live account and a `shellprocess` job
 (`shellprocess-luxenos-cleanup.conf`) runs
 `/usr/libexec/luxenos/luxenos-finish-install`, which purges
 `live-boot`/`live-config`, deletes the kiosk files and the live-only root
-access, records the BIOS GRUB disk, and rebuilds the initramfs. There is no
-display manager job because LuxenOS has no display manager.
+access, records the BIOS GRUB disk, and rebuilds the initramfs. A final
+shellprocess step enables greetd for the installed system.
 
 **3. Installed system.**
 No `boot=live`, no kiosk. You log in at the tty1 console;
