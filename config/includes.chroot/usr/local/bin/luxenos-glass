@@ -896,15 +896,14 @@ cmd_get() {
         intensity)
             if [ -r "$USER_CONF" ] && grep -q '^GLASS_INTENSITY=' "$USER_CONF"; then
                 sed -n 's/^GLASS_INTENSITY=//p' "$USER_CONF" | tail -n 1
-            elif [ "${GLASS_ENABLE:-yes}" = no ]; then
+            elif [ "$GLASS_ENABLE" = no ]; then
                 echo 0
             elif [ -n "${GLASS_INTENSITY:-}" ]; then
-                printf '%s\\n' "$GLASS_INTENSITY"
+                printf '%s\n' "$GLASS_INTENSITY"
             else
                 case "$GLASS_PRESET" in performance) echo 25 ;; balanced) echo 55 ;; rich) echo 85 ;; *) echo 0 ;; esac
             fi
-            ;;
-        compositor) printf '%s\n' "$COMP" ;;
+            ;;        compositor) printf '%s\n' "$COMP" ;;
         effects) printf '%s\n' "$FX" ;;
         blur) printf '%s\n' "$BLUR_ON" ;;
         animation_ms) printf '%s\n' "$GLASS_ANIM_MS" ;;
