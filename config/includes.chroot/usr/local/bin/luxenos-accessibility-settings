@@ -29,7 +29,7 @@ while :; do
         "Liquid Glass intensity")
             value=$(zenity --scale --title="Liquid Glass intensity" \
                 --text="Less glass ←  More glass
-0% = flat and minimal; 100% = strong blur, translucency, rounded corners and shadows." \
+0% = flat and minimal; 100% = strongest translucency, highlights and rounding; blur and window shadows require SwayFX." \
                 --min-value=0 --max-value=100 --value="$intensity" --step=1 --width=520 \
                 2>/dev/null) || continue
             case $value in ''|*[!0-9]*) continue ;; esac
