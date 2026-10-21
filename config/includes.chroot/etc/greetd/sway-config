@@ -1,0 +1,6 @@
+# Minimal compositor config for the graphical greetd login screen.
+# Exit this compositor after successful authentication so greetd can start
+# the selected user session.
+exec "wlgreet --command sway; swaymsg exit"
+
+include /etc/sway/config.d/*
