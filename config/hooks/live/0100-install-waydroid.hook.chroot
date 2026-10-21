@@ -22,9 +22,9 @@ WAYDROID_VERSION="${WAYDROID_VERSION:-unspecified}"
 WAYDROID_IMAGE_TYPE="${WAYDROID_IMAGE_TYPE:-GAPPS}"
 WAYDROID_REPO_URL="${WAYDROID_REPO_URL:-https://repo.waydro.id}"
 WAYDROID_INSTALL_SCRIPT="${WAYDROID_INSTALL_SCRIPT:-/tmp/waydroid-repo-setup.sh}"
-AURORA_STORE_URL="${AURORA_STORE_URL:-}"
+AURORA_STORE_URL="${AURORA_STORE_URL:-https://apt.izzysoft.de/fdroid/repo/com.aurora.store_76.apk}"
 AURORA_STORE_DIR="${AURORA_STORE_DIR:-/usr/share/luxenos/apks}"
-AURORA_STORE_SHA256="${AURORA_STORE_SHA256:-}"
+AURORA_STORE_SHA256="${AURORA_STORE_SHA256:-8a1ed9aa09631290da91cb793e0517b0f20dc70239ac94ae6682cd94f91a4bad}"
 DOWNLOAD_RETRIES="${DOWNLOAD_RETRIES:-3}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-120}"
 
@@ -242,8 +242,9 @@ if [ -n "$AURORA_STORE_URL" ]; then
             exit 1
         fi
     else
-        log "WARNING: Aurora Store APK download failed after $DOWNLOAD_RETRIES attempts (build will continue without it)"
-        log "WARNING: Users will need to install Aurora Store manually after first boot"
+        log "ERROR: Aurora Store APK download failed after $DOWNLOAD_RETRIES attempts"
+        log "ERROR: refusing to produce an image that was configured to bundle Aurora Store"
+        exit 1
     fi
 else
     log "AURORA_STORE_URL not set: Aurora Store will not be bundled (users can install it manually after first boot)"
