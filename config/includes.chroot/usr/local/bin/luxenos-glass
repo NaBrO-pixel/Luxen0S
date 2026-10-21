@@ -225,6 +225,7 @@ resolve_config() {
         P_BORDER_OPACITY=$((12 + _i * 20 / 100))
         P_SHADOW=$((_i * 60 / 100))
         P_RADIUS=$((4 + _i * 12 / 100))
+        if [ "$_i" -eq 0 ]; then P_OPACITY=100; P_BORDER_OPACITY=0; P_RADIUS=0; P_SHADOW=0; fi
         P_BLUR_PASSES=$((1 + _i * 2 / 100))
         P_SATURATION=$((100 + _i * 35 / 100))
         P_BLUR_NOISE=$((_i * 3 / 100))
@@ -988,7 +989,15 @@ case "${1:-}" in
         case "${2:-}" in
             flat|performance|balanced|rich)
                 clear_intensity_keys
-                if [ "$2" = flat ]; then set_user_key GLASS_ENABLE no
+                if [ "$2" = flat ]; then
+                    set_user_key GLASS_ENABLE no
+                    set_user_key GLASS_OPACITY 100
+                    set_user_key GLASS_BORDER_OPACITY 0
+                    set_user_key GLASS_SHADOW 0
+                    set_user_key GLASS_RADIUS 0
+                    set_user_key GLASS_BLUR no
+                    set_user_key GLASS_ANIM_MS 0
+                    set_user_key GLASS_DIM_INACTIVE 0
                 else set_user_key GLASS_ENABLE yes; set_user_key GLASS_PRESET "$2"; fi
                 ;;
             *) die "usage: luxenos-glass preset performance|balanced|rich|flat" ;;
