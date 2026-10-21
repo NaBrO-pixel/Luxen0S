@@ -185,6 +185,18 @@ for intensity in 0 50 100; do
         sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)
     [ "$actual" = "$intensity" ] || { rm -rf "$glass_home"; fail "intensity getter returned '$actual' for $intensity"; }
 done
+
+# The Accessibility slider must persist and report its value, without a running compositor.
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass intensity 63 >/dev/null 2>&1 \
+    || { rm -rf "$glass_home"; fail "Liquid Glass intensity command failed"; }
+grep -qx 'GLASS_INTENSITY=63' "$glass_home/.config/luxenos/glass.conf" \
+    || { rm -rf "$glass_home"; fail "Liquid Glass intensity was not persisted"; }
+[ "$(HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)" = 63 ] \
+    || { rm -rf "$glass_home"; fail "Liquid Glass intensity could not be read back"; }
 rm -rf "$glass_home"
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
