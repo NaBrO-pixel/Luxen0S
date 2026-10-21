@@ -202,7 +202,7 @@ resolve_config() {
     load_conf "$USER_CONF"
 
     : "${GLASS_ENABLE:=yes}" "${GLASS_THEME:=dark}" "${GLASS_PRESET:=balanced}"
-    : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}"
+    : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}" "${GLASS_SHEEN:=yes}" "${GLASS_HIGHLIGHT_OPACITY:=9}"
     : "${GLASS_ACCENT:=#7aa2ff}" "${GLASS_FONT:=Inter}" "${GLASS_FONT_SIZE:=13}"
     : "${GLASS_FALLBACK_OPACITY:=82}" "${GLASS_MIN_CONTRAST:=3.0}"
 
@@ -210,6 +210,7 @@ resolve_config() {
     enum GLASS_THEME dark dark light
     enum GLASS_EFFECTS auto auto off
     enum GLASS_REDUCE_MOTION no yes no
+    enum GLASS_SHEEN yes yes no
     enum GLASS_PRESET balanced performance balanced rich
     hexcolor GLASS_ACCENT '#7aa2ff'
     if [ -z "$GLASS_FONT" ]; then GLASS_FONT=Inter; fi
@@ -240,6 +241,7 @@ resolve_config() {
     num GLASS_BORDER_WIDTH 0 6 1
     num GLASS_FONT_SIZE 8 24 13
     num GLASS_FALLBACK_OPACITY 0 100 82
+    num GLASS_HIGHLIGHT_OPACITY 0 30 9
 
     # MIN_CONTRAST may be decimal (e.g. 4.5); keep it as hundredths.
     case $GLASS_MIN_CONTRAST in
@@ -276,6 +278,7 @@ resolve_effective() {
         OPA=100; GLASS_SHADOW=0; GLASS_ANIM_MS=0; SHEEN=0; R=0; BOP=0
     else
         SHEEN=1
+        if [ "$GLASS_SHEEN" = no ]; then SHEEN=0; fi
         # Without real blur the backdrop is not softened: panels get an
         # opacity floor so they stay legible.
         if [ "$BLUR_ON" = no ] && [ "$OPA" -lt "$GLASS_FALLBACK_OPACITY" ]; then
