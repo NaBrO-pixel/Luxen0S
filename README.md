@@ -79,14 +79,7 @@ panel opacity is raised until text keeps the configured contrast
 | `rich` | radius 8, 3 passes | deep | 55% | 200 ms | radius 16, punchier blur colour, inactive windows dimmed |
 | `flat` (command only) | off | off | 100% | none | no glass at all |
 
-**Graphical accessibility settings.** Open **Super+C → Settings: Accessibility** or launch **Accessibility Settings** from the app launcher. The 0–100 Liquid Glass slider adjusts opacity, blur strength, border visibility, shadows, corner radius, saturation, spacing and animation. Lower values are simpler and lighter on the GPU; 0 disables glass, while 100 applies the strongest available treatment. The same screen has a **Reduce motion** toggle and a reset option. The slider saves per-user overrides and does not change `/etc/luxenos/glass.conf`.
-
-**Configuration.** System defaults: `/etc/luxenos/glass.conf` (documented,
-every key explained). Your overrides: `~/.config/luxenos/glass.conf`, same
-format, wins over the system file. The file is parsed, not sourced; invalid
-values are reported and replaced by safe defaults. Missing files are fine.
-
-**Settings → Accessibility.** Open **Super+C → Settings: Accessibility**, or launch **Accessibility Settings** from the app launcher, to open the graphical settings panel. The 0–100 Liquid Glass slider adjusts opacity, blur strength, borders, shadows, corner radius, saturation, spacing and animation intensity together; the choice is saved per-user and applied immediately. Zero disables the glass treatment; higher values progressively add effects. Real compositor blur and rounded window corners require SwayFX; stock Sway keeps panels more opaque for readability. The same panel toggles reduced motion and can reset the appearance to the balanced default. Terminal alternative: `luxenos-glass intensity 0..100`.
+**Graphical accessibility settings.** Open **Super+C → Settings: Accessibility** or launch **Accessibility Settings** from the app launcher. The 0–100 Liquid Glass slider adjusts opacity, blur strength, border visibility, shadows, corner radius, saturation, spacing and animation. Lower values are simpler and lighter on the GPU; 0 disables glass, while 100 applies the strongest available treatment. The same screen has a **Reduce motion** toggle and a reset option. Changes are saved per user and applied immediately; the system defaults in `/etc/luxenos/glass.conf` remain unchanged. Real compositor blur and rounded window corners require SwayFX; stock Sway keeps panels more opaque for readability.
 
 **Reduced motion.** `GLASS_REDUCE_MOTION=yes` sets all transitions to zero
 (bar, launcher, GTK `enable-animations`). Hover and focus colours still change
