@@ -3,6 +3,11 @@
 
 set -eu
 
+# GitHub's contents API may store new scripts without the executable bit.
+if [ -f /usr/local/bin/luxenos-accessibility-settings ]; then
+    chmod 0755 /usr/local/bin/luxenos-accessibility-settings
+fi
+
 # GitHub's contents API can create new helper files without executable mode;
 # enforce the runtime mode explicitly in the image.
 if [ -f /usr/local/bin/luxenos-accessibility-settings ]; then
