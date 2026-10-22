@@ -9,6 +9,8 @@
 #   ~/.config/luxenos/glass/gtk3.css|gtk4.css        GTK accents and radii
 #   ~/.config/dunst/dunstrc                          notifications
 #   ~/.config/gtk-3.0|gtk-4.0/settings.ini           dark/light + animations
+#   ~/.config/qt6ct/qt6ct.conf + colors/             Qt apps (polkit password
+#                                                    prompt, pavucontrol-qt)
 #   live compositor settings over the Sway IPC       gaps, borders, and - only
 #                                                    on SwayFX - blur, rounded
 #                                                    corners, shadows, layer
@@ -36,6 +38,8 @@
 #   luxenos-glass namespaces       layer-shell namespaces used for SwayFX effects
 #   luxenos-glass lock-args        swaylock options in the glass palette (one per
 #                                  line; used by luxenos-lock)
+#   luxenos-glass greeter-config   wlgreet.toml in the glass palette (login
+#                                  screen; used by luxenos-greeter)
 #   luxenos-glass reset            drop your overrides
 #
 # Add --debug (or LUXENOS_GLASS_DEBUG=1) to see why anything was skipped.
@@ -208,6 +212,17 @@ alpha() { if [ "$1" -ge 100 ]; then printf '1.00'; else printf '0.%02d' "$1"; fi
 rgba() { printf 'rgba(%s,%s)' "$(rgb "$1")" "$(alpha "$2")"; }
 hex8() { printf '%s%02x' "$1" $(( $2 * 255 / 100 )); }
 pct_float() { printf '%d.%02d' $(( $1 / 100 )) $(( $1 % 100 )); }
+# mix A B PCT : #rrggbb that is PCT% of the way from A to B.
+mix() {
+    awk -v a="$(rgb "$1")" -v b="$(rgb "$2")" -v p="$3" 'BEGIN {
+        split(a, A, ","); split(b, B, ",")
+        for (i = 1; i <= 3; i++) C[i] = int(A[i] + (B[i] - A[i]) * p / 100 + 0.5)
+        printf "#%02x%02x%02x", C[1], C[2], C[3] }'
+}
+# unit #rrggbb : "R G B" as 0.000-1.000 floats (wlgreet colours).
+unit() {
+    awk -v c="$(rgb "$1")" 'BEGIN { split(c, C, ","); printf "%.3f %.3f %.3f", C[1] / 255, C[2] / 255, C[3] / 255 }'
+}
 min2() { if [ "$1" -lt "$2" ]; then echo "$1"; else echo "$2"; fi; }
 
 # min_opacity BASE TEXT BACKDROP REQUESTED MINCONTRAST_X100
@@ -386,11 +401,11 @@ detect_compositor() {
 # wlr-layer-shell namespaces are chosen by each client and are NOT exposed by
 # Sway/SwayFX IPC, so they cannot be listed at runtime. Values below were
 # recorded from the real clients (WAYLAND_DEBUG=client): waybar "waybar",
-# wofi "wofi", dunst "notifications". The login screen (wlgreet) is matched as
-# "wlgreet". Only components that are installed get
+# wofi "wofi", dunst "notifications". (The wlgreet login screen requests an
+# empty namespace, so it cannot be targeted; it sits on a pre-blurred
+# wallpaper instead, see cmd_greeter_config.) Only components that are installed get
 # effects; GLASS_NS_BAR / GLASS_NS_LAUNCHER / GLASS_NS_NOTIFY override the
-# namespace list if a component uses another one; GLASS_NS_GREETER does the
-# same for the login screen.
+# namespace list if a component uses another one.
 
 ns_bar() {
     _l=${GLASS_NS_BAR:-}
@@ -412,12 +427,6 @@ ns_notify() {
         if have dunst || have mako; then _l="notifications"; fi
         if have swaync; then _l="$_l swaync-notification-window swaync-control-center"; fi
     fi
-    printf '%s' "$_l"
-}
-
-ns_greeter() {
-    _l=${GLASS_NS_GREETER:-}
-    if [ -z "$_l" ] && have wlgreet; then _l=wlgreet; fi
     printf '%s' "$_l"
 }
 
@@ -667,6 +676,62 @@ INI
     fi
 }
 
+# Qt apps (polkit-kde password prompt, pavucontrol-qt) through qt6ct: Fusion
+# style with a palette derived from the glass colours. Like GTK apps, Qt
+# windows stay opaque. Takes effect with QT_QPA_PLATFORMTHEME=qt6ct, which
+# luxenos-sway-session and /etc/profile.d/luxenos-session.sh export.
+write_qt() {
+    qd="$CFG/qt6ct"
+    scheme="$qd/colors/luxenos-glass.conf"
+    if ! is_ours "$scheme"; then debug "leaving user-owned $scheme alone"; return 0; fi
+    win=$BASE
+    if [ "$GLASS_THEME" = light ]; then
+        base=$(mix "$BASE" '#ffffff' 70); alt=$(mix "$BASE" "$TEXT" 4)
+        btn=$(mix "$BASE" "$TEXT" 6); light='#ffffff'; dark=$(mix "$BASE" "$TEXT" 35)
+    else
+        base=$(mix "$BASE" '#000000' 25); alt=$(mix "$BASE" "$TEXT" 5)
+        btn=$(mix "$BASE" "$TEXT" 10); light=$(mix "$BASE" "$TEXT" 25); dark='#000000'
+    fi
+    mid=$(mix "$btn" "$dark" 50); midl=$(mix "$btn" "$light" 50)
+    off=$(mix "$TEXT" "$BASE" 55)
+    link=$GLASS_ACCENT; visited=$(mix "$GLASS_ACCENT" "$CRIT" 35)
+    # #AARRGGBB, Qt 6.6+ role order (WindowText ... PlaceholderText, Accent).
+    roles() {   # roles TEXT_COLOUR
+        for c in "$1" "$btn" "$light" "$midl" "$dark" "$mid" "$1" '#ffffff' "$1" \
+                 "$base" "$win" '#000000' "$GLASS_ACCENT" '#ffffff' "$link" "$visited" \
+                 "$alt" '#000000' "$win" "$TEXT" "$DIM" "$GLASS_ACCENT"; do
+            printf '#ff%s, ' "${c#'#'}"
+        done | sed 's/, $//'
+    }
+    install_file "$scheme" <<CONF
+# $MARK by luxenos-glass; edit /etc/luxenos/glass.conf instead.
+[ColorScheme]
+active_colors=$(roles "$TEXT")
+inactive_colors=$(roles "$TEXT")
+disabled_colors=$(roles "$off")
+CONF
+    f="$qd/qt6ct.conf"
+    if ! is_ours "$f"; then debug "leaving user-owned $f alone"; return 0; fi
+    install_file "$f" <<CONF
+# $MARK by luxenos-glass; edit /etc/luxenos/glass.conf instead.
+[Appearance]
+color_scheme_path=$scheme
+custom_palette=true
+icon_theme=Adwaita
+standard_dialogs=default
+style=Fusion
+
+[Fonts]
+fixed="Monospace,$FONT_PT,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+general="$GLASS_FONT,$FONT_PT,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+
+[Interface]
+activate_item_on_single_click=1
+menus_have_icons=true
+show_shortcuts_in_context_menus=true
+CONF
+}
+
 # Notifications: a small complete dunstrc (unlisted keys keep dunst's own
 # defaults). A full file rather than a dunstrc.d drop-in, because drop-ins only
 # exist in newer dunst releases.
@@ -799,10 +864,9 @@ apply_sway() {
     fi
 
     found=0
-    for kind in bar launcher notify greeter; do
+    for kind in bar launcher notify; do
         case $kind in
             bar) nss=$(ns_bar); how=bar ;;
-            greeter) nss=$(ns_greeter); how=bar ;;
             launcher) nss=$(ns_launcher); how=panel ;;
             notify) nss=$(ns_notify); how=panel ;;
         esac
@@ -839,6 +903,7 @@ cmd_apply() {
     write_waybar
     write_wofi
     write_gtk
+    write_qt
     write_dunst
     if [ "$mode" != --files-only ]; then
         apply_gsettings
@@ -993,7 +1058,6 @@ cmd_namespaces() {
     printf 'bar        %s\n' "$(ns_bar)"
     printf 'launcher   %s\n' "$(ns_launcher)"
     printf 'notify     %s\n' "$(ns_notify)"
-    printf 'greeter    %s\n' "$(ns_greeter)"
     printf '\nNamespaces are chosen by each program and are not listed by Sway IPC.\nTo verify one: WAYLAND_DEBUG=client <program> 2>&1 | grep get_layer_surface\n'
 }
 
@@ -1036,6 +1100,30 @@ cmd_lock_args() {
         --font "$GLASS_FONT" --font-size $(( GLASS_FONT_SIZE * 2 )) \
         --indicator-radius 84 --indicator-thickness 4 \
         --indicator-idle-visible --show-failed-attempts
+}
+
+# Login screen: wlgreet.toml in the glass palette. wlgreet paints its
+# background colour over the whole output, so a translucent tint over the
+# pre-blurred wallpaper (set in /etc/greetd/sway-config) is the frosted glass
+# panel; it works the same on stock Sway and SwayFX. Opacity follows the
+# no-blur readability rules (fallback floor + minimum contrast).
+cmd_greeter_config() {
+    resolve_config
+    FX_CAPABLE=no
+    resolve_effective
+    col() {   # col SECTION #rrggbb OPACITY_PCT
+        set -- "$1" "$(unit "$2")" "$3"
+        # shellcheck disable=SC2086  # "R G B" split on purpose
+        printf '\n[%s]\nred = %s\ngreen = %s\nblue = %s\nopacity = %s\n' \
+            "$1" $2 "$(alpha "$3")"
+    }
+    printf '# %s by luxenos-glass from %s.\n' "$MARK" "$SYS_CONF"
+    printf 'command = "/usr/local/bin/luxenos-sway-session"\noutputMode = "all"\nscale = 1\n'
+    col background "$BASE" "$OPA"
+    col headline "$TEXT" 100
+    col prompt "$GLASS_ACCENT" 100
+    col promptErr "$CRIT" 100
+    col border "$GLASS_ACCENT" 85
 }
 
 # ---------------------------------------------------------------- dispatch --
@@ -1184,6 +1272,7 @@ case "${1:-}" in
     status) cmd_status ;;
     namespaces) cmd_namespaces ;;
     lock-args) cmd_lock_args ;;
+    greeter-config) cmd_greeter_config ;;
     *)
         sed -n '/^# Usage:/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
         exit 2

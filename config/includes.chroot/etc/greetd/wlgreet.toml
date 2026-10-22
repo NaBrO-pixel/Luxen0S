@@ -1,43 +1,37 @@
-# LuxenOS login screen, in the liquid-glass palette of /etc/luxenos/glass.conf
-# (dark theme): GLASS_TINT_DARK panel, light text, GLASS_ACCENT prompt/border,
-# the glass "critical" red for errors. Colours are 0.0-1.0 per channel.
-# The panel is translucent so the wallpaper (blurred on SwayFX) shows through;
-# 0.82 matches GLASS_FALLBACK_OPACITY, which keeps text readable without blur.
+# LuxenOS login screen fallback colours. luxenos-greeter normally generates
+# this from /etc/luxenos/glass.conf at every start; this copy (the default
+# dark palette) is only used if that fails. Regenerate with:
+#   luxenos-glass greeter-config > /etc/greetd/wlgreet.toml
 command = "/usr/local/bin/luxenos-sway-session"
 outputMode = "all"
 scale = 1
 
-# GLASS_TINT_DARK #141a26
 [background]
 red = 0.078
 green = 0.102
 blue = 0.149
 opacity = 0.82
 
-# glass text #e8edf7
 [headline]
 red = 0.910
 green = 0.929
 blue = 0.969
-opacity = 1.0
+opacity = 1.00
 
-# GLASS_ACCENT #7aa2ff
 [prompt]
 red = 0.478
 green = 0.635
-blue = 1.0
-opacity = 1.0
+blue = 1.000
+opacity = 1.00
 
-# glass critical #ff6b62
 [promptErr]
-red = 1.0
+red = 1.000
 green = 0.420
 blue = 0.384
-opacity = 1.0
+opacity = 1.00
 
-# GLASS_ACCENT #7aa2ff, at the focused-window border strength (85%)
 [border]
 red = 0.478
 green = 0.635
-blue = 1.0
+blue = 1.000
 opacity = 0.85

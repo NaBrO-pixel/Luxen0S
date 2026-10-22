@@ -1,15 +1,13 @@
 # Minimal compositor config for the graphical greetd login screen.
-# Exit this compositor after successful authentication so greetd can start
-# the selected user session.
+# luxenos-greeter exits this compositor after successful authentication so
+# greetd can start the selected user session.
 
-# Same liquid-glass look as the desktop: the LuxenOS wallpaper behind a
-# translucent wlgreet panel (colours in /etc/greetd/wlgreet.toml follow the
-# /etc/luxenos/glass.conf palette). On SwayFX, luxenos-glass also blurs the
-# login panel; on stock Sway it stays tinted translucency. --sway-only writes
-# no files, so it is safe under the _greetd account.
-output * bg /usr/share/backgrounds/luxenos/wallpaper.png fill
-exec_always /usr/local/bin/luxenos-glass apply --sway-only
+# Same liquid-glass look as the desktop and the lock screen: wlgreet paints a
+# translucent glass tint (colours generated from /etc/luxenos/glass.conf) over
+# the frosted, pre-blurred LuxenOS wallpaper. No compositor blur is needed, so
+# it looks the same on stock Sway and SwayFX.
+output * bg /usr/share/backgrounds/luxenos/wallpaper-blur.png fill
 
-exec "wlgreet --command /usr/local/bin/luxenos-sway-session; swaymsg exit"
+exec /usr/libexec/luxenos/luxenos-greeter
 
 include /etc/sway/config.d/*

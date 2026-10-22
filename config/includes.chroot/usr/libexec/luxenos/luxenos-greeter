@@ -1,0 +1,26 @@
+#!/bin/sh
+# luxenos-greeter - run the wlgreet login screen in the current liquid-glass
+# palette, then end the greeter compositor so greetd can start the session.
+#
+# The colours are generated from /etc/luxenos/glass.conf at every start
+# (`luxenos-glass greeter-config`), so the login screen always matches the
+# desktop theme and accent. If generation fails, the shipped
+# /etc/greetd/wlgreet.toml (same palette, dark defaults) is used instead.
+conf=/etc/greetd/wlgreet.toml
+
+dir=${XDG_RUNTIME_DIR:-}
+if [ -z "$dir" ] || [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
+    dir=$(mktemp -d 2>/dev/null) || dir=""
+fi
+if [ -n "$dir" ] && [ -x /usr/local/bin/luxenos-glass ]; then
+    gen="$dir/luxenos-wlgreet.toml"
+    if timeout 5 /usr/local/bin/luxenos-glass greeter-config > "$gen.tmp" 2>/dev/null \
+        && grep -q '^\[background\]' "$gen.tmp" && mv -f "$gen.tmp" "$gen"; then
+        conf=$gen
+    else
+        rm -f "$gen.tmp"
+    fi
+fi
+
+wlgreet --config "$conf" --command /usr/local/bin/luxenos-sway-session
+swaymsg exit
