@@ -14,8 +14,8 @@
     },
     "battery": {
         "format": "{icon} {capacity}%",
-        "format-icons": ["", "", "", "", ""],
-        "format-charging": " {capacity}%"
+        "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
+        "format-charging": "\uf0e7 {capacity}%"
     },
     "custom/power-profile": {
         "exec": "luxenos-power-profile-status",
@@ -26,16 +26,16 @@
         "tooltip": true
     },
     "network": {
-        "format-wifi": " {essid}",
-        "format-ethernet": " Connected",
+        "format-wifi": "\uf1eb {essid}",
+        "format-ethernet": "\uf0e8 Connected",
         "format-disconnected": "⚠ Offline",
         "tooltip-format": "{ifname}: {ipaddr}",
         "on-click": "luxenos-network"
     },
     "pulseaudio": {
         "format": "{icon} {volume}%",
-        "format-muted": " Muted",
-        "format-icons": ["", "", ""],
+        "format-muted": "\uf026 Muted",
+        "format-icons": ["\uf026", "\uf027", "\uf028"],
         "on-click": "pavucontrol-qt"
     },
     "tray": {

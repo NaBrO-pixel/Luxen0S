@@ -15,10 +15,10 @@ strings:
     versionedName:       "LuxenOS 1.2.0"
     shortVersionedName:  "LuxenOS 1.2.0"
     bootloaderEntryName: "LuxenOS"
-    productUrl:          "https://example.invalid/luxenos"
-    supportUrl:          "https://example.invalid/luxenos/support"
-    knownIssuesUrl:      "https://example.invalid/luxenos/issues"
-    releaseNotesUrl:     "https://example.invalid/luxenos/releases"
+    productUrl:          "https://github.com/NaBrO-pixel/Luxen0S"
+    supportUrl:          "https://github.com/NaBrO-pixel/Luxen0S/issues"
+    knownIssuesUrl:      "https://github.com/NaBrO-pixel/Luxen0S/blob/main/issues.md"
+    releaseNotesUrl:     "https://github.com/NaBrO-pixel/Luxen0S/releases"
 
 images:
     productLogo:         "logo.png"

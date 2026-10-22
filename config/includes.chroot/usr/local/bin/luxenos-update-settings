@@ -186,13 +186,13 @@ configure_updates() {
     echo ""
     
     # Enable/disable
-    read -p "Enable automatic updates? (yes/no) [$(grep '^ENABLE_AUTO_UPDATES' "$CONFIG_FILE" | cut -d= -f2)]: " enable_updates
+    read -r -p "Enable automatic updates? (yes/no) [$(grep '^ENABLE_AUTO_UPDATES' "$CONFIG_FILE" | cut -d= -f2)]: " enable_updates
     if [ -n "$enable_updates" ]; then
         sed -i "s/^ENABLE_AUTO_UPDATES=.*/ENABLE_AUTO_UPDATES=$enable_updates/" "$CONFIG_FILE"
     fi
     
     # Update time
-    read -p "Time to run updates (HH:MM) [$(grep '^AUTO_UPDATE_TIME' "$CONFIG_FILE" | cut -d= -f2)]: " update_time
+    read -r -p "Time to run updates (HH:MM) [$(grep '^AUTO_UPDATE_TIME' "$CONFIG_FILE" | cut -d= -f2)]: " update_time
     if [ -n "$update_time" ] && ! [[ $update_time =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
         log_warn "'$update_time' is not a time like 02:00; keeping the current time"
         update_time=""
@@ -202,13 +202,13 @@ configure_updates() {
     fi
     
     # AC power only
-    read -p "Only update on AC power? (yes/no) [$(grep '^UPDATES_ON_AC_ONLY' "$CONFIG_FILE" | cut -d= -f2)]: " ac_only
+    read -r -p "Only update on AC power? (yes/no) [$(grep '^UPDATES_ON_AC_ONLY' "$CONFIG_FILE" | cut -d= -f2)]: " ac_only
     if [ -n "$ac_only" ]; then
         sed -i "s/^UPDATES_ON_AC_ONLY=.*/UPDATES_ON_AC_ONLY=$ac_only/" "$CONFIG_FILE"
     fi
     
     # Auto security updates
-    read -p "Auto-install security updates? (yes/no) [$(grep '^AUTO_INSTALL_SECURITY' "$CONFIG_FILE" | cut -d= -f2)]: " auto_security
+    read -r -p "Auto-install security updates? (yes/no) [$(grep '^AUTO_INSTALL_SECURITY' "$CONFIG_FILE" | cut -d= -f2)]: " auto_security
     if [ -n "$auto_security" ]; then
         sed -i "s/^AUTO_INSTALL_SECURITY=.*/AUTO_INSTALL_SECURITY=$auto_security/" "$CONFIG_FILE"
     fi
@@ -216,17 +216,17 @@ configure_updates() {
     # Update components
     echo ""
     echo "Components to update:"
-    read -p "Update system packages? (yes/no) [$(grep '^UPDATE_PACKAGES' "$CONFIG_FILE" | cut -d= -f2)]: " update_packages
+    read -r -p "Update system packages? (yes/no) [$(grep '^UPDATE_PACKAGES' "$CONFIG_FILE" | cut -d= -f2)]: " update_packages
     if [ -n "$update_packages" ]; then
         sed -i "s/^UPDATE_PACKAGES=.*/UPDATE_PACKAGES=$update_packages/" "$CONFIG_FILE"
     fi
     
-    read -p "Update Waydroid? (yes/no) [$(grep '^UPDATE_WAYDROID' "$CONFIG_FILE" | cut -d= -f2)]: " update_waydroid
+    read -r -p "Update Waydroid? (yes/no) [$(grep '^UPDATE_WAYDROID' "$CONFIG_FILE" | cut -d= -f2)]: " update_waydroid
     if [ -n "$update_waydroid" ]; then
         sed -i "s/^UPDATE_WAYDROID=.*/UPDATE_WAYDROID=$update_waydroid/" "$CONFIG_FILE"
     fi
     
-    read -p "Update Flatpaks? (yes/no) [$(grep '^UPDATE_FLATPAKS' "$CONFIG_FILE" | cut -d= -f2)]: " update_flatpaks
+    read -r -p "Update Flatpaks? (yes/no) [$(grep '^UPDATE_FLATPAKS' "$CONFIG_FILE" | cut -d= -f2)]: " update_flatpaks
     if [ -n "$update_flatpaks" ]; then
         sed -i "s/^UPDATE_FLATPAKS=.*/UPDATE_FLATPAKS=$update_flatpaks/" "$CONFIG_FILE"
     fi

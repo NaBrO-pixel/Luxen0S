@@ -163,7 +163,8 @@ check_prerequisites() {
 create_backup() {
     log_section "Creating System Backup"
     
-    local backup_name="luxenos-backup-$(date +%Y%m%d-%H%M%S)"
+    local backup_name
+    backup_name="luxenos-backup-$(date +%Y%m%d-%H%M%S)"
     local backup_path="$LUXENOS_BACKUP_DIR/$backup_name"
     
     mkdir -p "$backup_path"
@@ -224,8 +225,11 @@ update_package_cache() {
 check_available_updates() {
     log_section "Checking Available Updates"
     
-    local updates=$(apt-get upgrade -s 2>/dev/null | grep "^Inst" | wc -l)
-    local security_updates=$(apt-get upgrade -s 2>/dev/null | grep "^Inst.*Security" | wc -l)
+    local updates
+    
+    updates=$(apt-get upgrade -s 2>/dev/null | grep "^Inst" | wc -l)
+    local security_updates
+    security_updates=$(apt-get upgrade -s 2>/dev/null | grep "^Inst.*Security" | wc -l)
     
     echo "$updates"
     log_info "Available package updates: $updates"
@@ -287,14 +291,16 @@ update_waydroid() {
         return 0
     fi
     
-    local current_version=$(waydroid --version 2>/dev/null || echo "unknown")
+    local current_version
+    
+    current_version=$(waydroid --version 2>/dev/null || echo "unknown")
     log_info "Current Waydroid version: $current_version"
     
     # Check for Waydroid package updates
     if apt-get upgrade -s 2>/dev/null | grep -q "^Inst waydroid"; then
         log_info "Waydroid update available"
         if [ "$AUTO_MODE" != "1" ]; then
-            read -p "Install Waydroid update? (y/n) " -n 1 -r
+            read -r -p "Install Waydroid update? (y/n) " -n 1
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 log_warn "Skipping Waydroid update"
@@ -358,11 +364,12 @@ check_system_health() {
     fi
     
     # Clean up unused packages
-    local orphaned=$(apt-get autoremove --dry-run 2>/dev/null | grep "^Remov" | wc -l)
+    local orphaned
+    orphaned=$(apt-get autoremove --dry-run 2>/dev/null | grep "^Remov" | wc -l)
     if [ "$orphaned" -gt 0 ]; then
         log_info "Found $orphaned orphaned packages"
         if [ "$AUTO_MODE" != "1" ]; then
-            read -p "Remove orphaned packages? (y/n) " -n 1 -r
+            read -r -p "Remove orphaned packages? (y/n) " -n 1
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 log_info "Removing orphaned packages..."
@@ -377,14 +384,27 @@ check_system_health() {
     fi
     
     # Verify filesystem integrity
+    # e2fsck cannot check a mounted filesystem; the kernel records errors it
+    # hit in the ext4 superblock instead, which tune2fs can read while mounted.
     log_info "Checking filesystem integrity..."
-    if command -v fsck >/dev/null 2>&1; then
-        if e2fsck -n / 2>/dev/null | grep -q "no errors"; then
-            log_info "✓ Filesystem integrity verified"
-        else
-            log_warn "Consider running fsck on next boot"
-        fi
-    fi
+    local root_dev root_fs fs_info
+    root_dev=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+    root_fs=$(findmnt -n -o FSTYPE / 2>/dev/null || true)
+    case $root_fs in
+        ext2|ext3|ext4)
+            if command -v tune2fs >/dev/null 2>&1 && fs_info=$(tune2fs -l "$root_dev" 2>/dev/null); then
+                if printf '%s\n' "$fs_info" | grep -q '^Filesystem state:.*error' \
+                    || printf '%s\n' "$fs_info" | grep -Eq '^FS Error count:[[:space:]]*[1-9]'; then
+                    log_warn "The root filesystem has recorded errors; run fsck on next boot (touch /forcefsck)"
+                else
+                    log_info "✓ No filesystem errors recorded"
+                fi
+            else
+                log_warn "Could not read the root filesystem state ($root_dev)"
+            fi
+            ;;
+        *) log_info "Root filesystem is ${root_fs:-unknown}; integrity check skipped" ;;
+    esac
 }
 
 # ============================================================================
@@ -394,14 +414,16 @@ check_system_health() {
 check_kernel_updates() {
     log_section "Checking Kernel Updates"
     
-    local current_kernel=$(uname -r)
+    local current_kernel
+    
+    current_kernel=$(uname -r)
     log_info "Current kernel: $current_kernel"
     
     # Check for newer kernel packages
     if apt-cache policy linux-image-amd64 2>/dev/null | grep -q "Candidate"; then
         log_info "Kernel updates may be available"
         if [ "$AUTO_MODE" != "1" ]; then
-            read -p "Check detailed kernel update info? (y/n) " -n 1 -r
+            read -r -p "Check detailed kernel update info? (y/n) " -n 1
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 apt-cache policy linux-image-amd64 2>/dev/null | tee -a "$LUXENOS_UPDATE_LOG"
@@ -437,7 +459,7 @@ update_firmware() {
     if run_logged fwupdmgr get-updates --assume-yes; then
         log_info "Firmware updates available"
         if [ "$AUTO_MODE" != "1" ]; then
-            read -p "Install firmware updates? (y/n) " -n 1 -r
+            read -r -p "Install firmware updates? (y/n) " -n 1
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 log_warn "Skipping firmware updates"
@@ -466,7 +488,8 @@ cleanup_system() {
     log_section "System Cleanup"
     
     # Remove package cache
-    local cache_size=$(du -sh /var/cache/apt 2>/dev/null | cut -f1)
+    local cache_size
+    cache_size=$(du -sh /var/cache/apt 2>/dev/null | cut -f1)
     log_info "Removing old package cache ($cache_size)..."
     apt-get autoclean -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
     
@@ -480,7 +503,8 @@ cleanup_system() {
     journalctl --vacuum=30d 2>/dev/null || true
     
     # Check disk usage after cleanup
-    local used_space=$(df / | awk 'NR==2 {printf "%.1f", $3/1024/1024}')
+    local used_space
+    used_space=$(df / | awk 'NR==2 {printf "%.1f", $3/1024/1024}')
     log_info "✓ Cleanup complete (disk usage: ${used_space}GB)"
 }
 
@@ -496,8 +520,8 @@ list_available_backups() {
         return 1
     fi
     
-    ls -ltrh "$LUXENOS_BACKUP_DIR" | tail -n +2 | \
-        awk '{print NR ": " $NF " (" $6 " " $7 " " $8 ")"}' | \
+    # Newest first, numbered in the same order rollback_system selects by.
+    ls -t "$LUXENOS_BACKUP_DIR" | awk '{print NR ": " $0}' | \
         tee -a "$LUXENOS_UPDATE_LOG"
 }
 
@@ -510,16 +534,20 @@ rollback_system() {
     
     log_warn "WARNING: Rollback will restore system state from backup"
     log_warn "WARNING: Changes made after backup will be lost"
-    read -p "Continue with rollback? (yes/no) " response
+    read -r -p "Continue with rollback? (yes/no) " response
     if [ "$response" != "yes" ]; then
         log_info "Rollback cancelled"
         return 0
     fi
     
-    read -p "Select backup number to restore: " backup_num
+    read -r -p "Select backup number to restore: " backup_num
+    case $backup_num in
+        ''|*[!0-9]*|0) log_error "Invalid backup selection"; return 1 ;;
+    esac
     
     # Get the Nth backup (POSIX compatible)
-    local backup_to_restore=$(ls -t "$LUXENOS_BACKUP_DIR" | sed -n "${backup_num}p")
+    local backup_to_restore
+    backup_to_restore=$(ls -t "$LUXENOS_BACKUP_DIR" | sed -n "${backup_num}p")
     
     if [ -z "$backup_to_restore" ]; then
         log_error "Invalid backup selection"
@@ -535,9 +563,20 @@ rollback_system() {
         apt-get dselect-upgrade -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
     fi
     
-    log_info "Restoring /etc configuration..."
+    # Accounts, passwords and the machine identity are never rolled back:
+    # restoring them would undo password changes and break users created
+    # since the backup (their homes and files would lose their owner).
+    log_info "Restoring /etc configuration (accounts and passwords are kept)..."
     if [ -f "$backup_path/etc-backup.tar.gz" ]; then
-        tar -xzf "$backup_path/etc-backup.tar.gz" -C / 2>/dev/null || \
+        tar -xzf "$backup_path/etc-backup.tar.gz" -C / \
+            --exclude='etc/passwd' --exclude='etc/passwd-' \
+            --exclude='etc/shadow' --exclude='etc/shadow-' \
+            --exclude='etc/group' --exclude='etc/group-' \
+            --exclude='etc/gshadow' --exclude='etc/gshadow-' \
+            --exclude='etc/subuid' --exclude='etc/subuid-' \
+            --exclude='etc/subgid' --exclude='etc/subgid-' \
+            --exclude='etc/machine-id' \
+            2>/dev/null || \
             log_warn "Could not restore all /etc files"
     fi
     
@@ -697,7 +736,7 @@ EOF
         # Interactive mode
         while true; do
             show_menu
-            read -p "Select option (0-11): " choice
+            read -r -p "Select option (0-11): " choice
             
             case $choice in
                 1) update_package_cache && check_available_updates ;;

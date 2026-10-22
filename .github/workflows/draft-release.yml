@@ -29,7 +29,9 @@ jobs:
       contents: write
       actions: read
     env:
-      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+      # RELEASE_PAT if configured; otherwise the job token (contents: write
+      # and actions: read above are enough for artifacts and releases).
+      GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
       GH_REPO: ${{ github.repository }}
       VARIANT: ${{ inputs.variant }}
       RUN_ID: ${{ inputs.run_id }}
@@ -92,23 +94,24 @@ jobs:
           fi
 
           if [ -f "$name" ]; then
+            # Whole image (within the 2 GiB asset cap): release it as is.
             sha256sum -c "$name.sha256"
-            size=$(stat -c%s "$name")
-            part=$(( (size + 1) / 2 ))
-            [ "$part" -le 1992294400 ] || part=1992294400
-            split -b "$part" -d "$name" "$name.part"
-            sha256sum "$name".part* > SHA256SUMS.parts
-            rm -f "$name"
-          fi
-
-          if ls "$name".part* >/dev/null 2>&1; then
+          elif compgen -G "$name.part[0-9][0-9]" >/dev/null; then
+            # Split image: check every part, then that they rebuild the
+            # original image the build recorded.
             sha256sum -c SHA256SUMS.parts
-          fi
-
-          if [ -f "REASSEMBLE.md" ]; then
-            echo "REASSEMBLE.md present"
+            want=$(cut -d' ' -f1 "$name.sha256")
+            got=$(cat "$name".part[0-9][0-9] | sha256sum | cut -d' ' -f1)
+            if [ "$got" != "$want" ]; then
+              echo "::error::The parts do not reassemble into $name"
+              exit 1
+            fi
+            if [ ! -f REASSEMBLE.md ]; then
+              echo "::error::REASSEMBLE.md is missing for a split image"
+              exit 1
+            fi
           else
-            echo "::error::REASSEMBLE.md is missing"
+            echo "::error::Neither $name nor its parts are in the artifact"
             exit 1
           fi
 

@@ -14,17 +14,20 @@ esac
 style=$(timeout 3 luxenos-glass lock-args 2>/dev/null)
 if [ -n "$style" ]; then
     # One option or value per line (font names may contain spaces).
+    # Count the fields the split really produces: empty lines yield none.
+    n=$(printf '%s\n' "$style" | grep -c .)
     oldifs=$IFS
     IFS='
 '
+    set -f
     # shellcheck disable=SC2086  # intentional split on newlines
     set -- $style "$@"
+    set +f
     IFS=$oldifs
     if swaylock -f "$@"; then
         exit 0
     fi
     # Drop the style options again, keep the caller's own arguments.
-    n=$(printf '%s\n' "$style" | wc -l)
     shift "$n"
 fi
 exec swaylock -f -c "$color" "$@"

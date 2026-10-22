@@ -161,6 +161,10 @@ done
 grep -q '/usr/libexec/luxenos/luxenos-power-profile-root</annotate>' \
     config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy \
     || fail "polkit policy does not reference /usr/libexec/luxenos/luxenos-power-profile-root"
+grep -q 'systemctl disable greetd.service' config/hooks/live/0150-installer-kiosk.hook.chroot \
+    || fail "hook 0150 must disable greetd in the live image (it would replace the installer kiosk)"
+grep -q 'SetDisplayPasswordFunction' config/includes.chroot/usr/share/plymouth/themes/luxenos/luxenos.script \
+    || fail "Plymouth theme must draw the disk-encryption passphrase prompt"
 grep -qx 'swaybg' config/package-lists/desktop.list.chroot \
     || fail "swaybg missing: 'output * bg' wallpapers would not be drawn"
 grep -q 'enable-greetd.sh' config/includes.installer/preseed.cfg \

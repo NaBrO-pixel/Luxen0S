@@ -9,8 +9,10 @@
 conf=/etc/greetd/wlgreet.toml
 
 dir=${XDG_RUNTIME_DIR:-}
+own_dir=""
 if [ -z "$dir" ] || [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
     dir=$(mktemp -d 2>/dev/null) || dir=""
+    own_dir=$dir
 fi
 if [ -n "$dir" ] && [ -x /usr/local/bin/luxenos-glass ]; then
     gen="$dir/luxenos-wlgreet.toml"
@@ -23,4 +25,5 @@ if [ -n "$dir" ] && [ -x /usr/local/bin/luxenos-glass ]; then
 fi
 
 wlgreet --config "$conf" --command /usr/local/bin/luxenos-sway-session
+if [ -n "$own_dir" ]; then rm -rf "$own_dir"; fi
 swaymsg exit
