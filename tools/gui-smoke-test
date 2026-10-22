@@ -1,0 +1,114 @@
+#!/bin/sh
+# Start each LuxenOS desktop application inside a headless Sway (no GPU, no
+# input devices) and check that it starts, maps a surface and keeps running
+# without a Python traceback. Screenshots of every app are written to
+# $SMOKE_OUT (default: ./gui-smoke) for review.
+#
+# This proves the apps start and render against real GTK 4 / gtk4-layer-shell /
+# Sway IPC; it does not replace testing on real hardware (no real network,
+# Bluetooth, audio, backlight or battery here).
+#
+# Needs: sway, grim, python3-gi, gir1.2-gtk-4.0, gir1.2-gtk4layershell-1.0,
+# dbus-daemon. CI runs it in a debian:trixie container (validate.yml).
+#
+# Usage: tools/gui-smoke-test [app...]     (default: all)
+
+set -u
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+CHROOT=$ROOT/config/includes.chroot
+OUT=${SMOKE_OUT:-$ROOT/gui-smoke}
+mkdir -p "$OUT"
+
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -z "${LUXENOS_SMOKE_INNER:-}" ]; then
+    export LUXENOS_SMOKE_INNER=1
+    exec dbus-run-session -- "$0" "$@"
+fi
+
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-$(mktemp -d)}
+chmod 700 "$XDG_RUNTIME_DIR"
+HOME_DIR=$(mktemp -d)
+export HOME="$HOME_DIR" XDG_CONFIG_HOME="$HOME_DIR/.config"
+export LUXENOS_PYLIB="$CHROOT/usr/lib/luxenos/python"
+export LUXENOS_GLASS_SYS_CONF="$CHROOT/etc/luxenos/glass.conf"
+export LUXENOS_UI_CSS="$CHROOT/usr/share/luxenos/ui/shell.css"
+export LUXENOS_THEMES_DIR="$CHROOT/usr/share/luxenos/themes"
+export LUXENOS_DOCK_SYS_CONF="$CHROOT/etc/luxenos/dock.conf"
+export PATH="$CHROOT/usr/local/bin:$PATH"
+export WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman
+export WLR_HEADLESS_OUTPUTS=1 XDG_CURRENT_DESKTOP=sway
+export GSK_RENDERER=cairo GTK_A11Y=none
+
+sh "$CHROOT/usr/local/bin/luxenos-glass" apply --files-only >/dev/null 2>&1
+
+cat > "$HOME_DIR/sway.conf" <<EOF
+output HEADLESS-1 resolution 1366x768 bg #1d2330 solid_color
+workspace 1
+EOF
+sway -c "$HOME_DIR/sway.conf" >"$OUT/sway.log" 2>&1 &
+sway_pid=$!
+i=0
+while [ $i -lt 50 ]; do
+    sock=$(ls "$XDG_RUNTIME_DIR"/sway-ipc.*.sock 2>/dev/null | head -n1)
+    [ -n "$sock" ] && break
+    sleep 0.2; i=$((i + 1))
+done
+if [ -z "${sock:-}" ]; then
+    echo "FAIL: headless sway did not start"; cat "$OUT/sway.log"; exit 1
+fi
+export SWAYSOCK=$sock
+for w in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+    case $w in *.lock) continue ;; esac
+    WAYLAND_DISPLAY=${w##*/}
+    break
+done
+export WAYLAND_DISPLAY
+# Something to look at in the dock and the overview.
+swaymsg 'exec foot' >/dev/null 2>&1
+swaymsg 'workspace 2; exec foot; workspace 1' >/dev/null 2>&1
+sleep 1
+
+fails=0
+run_app() {   # run_app NAME SECONDS ARGS...
+    name=$1; secs=$2; shift 2
+    log="$OUT/$name.log"
+    "$@" >"$log" 2>&1 &
+    pid=$!
+    sleep "$secs"
+    if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid"; rc=$?
+        if [ "$rc" -ne 0 ]; then
+            echo "FAIL: $name exited with $rc"; sed 's/^/    /' "$log"; fails=$((fails + 1)); return
+        fi
+    fi
+    grim "$OUT/$name.png" 2>/dev/null || true
+    if grep -q 'Traceback' "$log"; then
+        echo "FAIL: $name raised a Python exception"; sed 's/^/    /' "$log"; fails=$((fails + 1))
+    else
+        echo "ok:   $name"
+    fi
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+}
+
+apps=${*:-launcher dock quick-settings overview monitor software restore-center welcome settings-theme}
+for a in $apps; do
+    case $a in
+        launcher) run_app launcher 3 luxenos-launcher ;;
+        dock) run_app dock 3 luxenos-dock ;;
+        quick-settings) run_app quick-settings 3 luxenos-quick-settings ;;
+        overview) run_app overview 3 luxenos-overview ;;
+        monitor) run_app monitor 4 luxenos-monitor ;;
+        software) run_app software 12 luxenos-software ;;
+        restore-center) run_app restore-center 3 luxenos-restore-center ;;
+        welcome) run_app welcome 3 luxenos-welcome --force ;;
+        settings-theme) run_app theme-list 1 luxenos-theme list ;;
+        *) echo "unknown app $a"; fails=$((fails + 1)) ;;
+    esac
+done
+
+kill "$sway_pid" 2>/dev/null
+rm -rf "$HOME_DIR"
+if [ "$fails" -gt 0 ]; then
+    echo "$fails app(s) failed"
+    exit 1
+fi
+echo "all apps started"

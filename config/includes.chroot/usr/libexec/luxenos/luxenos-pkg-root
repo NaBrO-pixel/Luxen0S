@@ -1,13 +1,29 @@
 #!/bin/sh
 # luxenos-pkg-root - the ONLY privileged part of LuxenOS's graphical package
-# installer. It is started through pkexec (polkit action org.luxenos.pkg.install,
-# admin authentication required every time) by luxenos-deb-install and
-# luxenos-wine-open. It is not meant to be run by hand.
+# tools. It is started through pkexec (polkit action org.luxenos.pkg.install,
+# admin authentication required every time) by luxenos-deb-install,
+# luxenos-wine-open and the Software Center (luxenos-software). It is not
+# meant to be run by hand.
 #
 # Subcommands (everything else is rejected):
 #   install-deb SHA256 /abs/path/file.deb   install one .deb through apt-get
 #   update-lists                            apt-get update
 #   enable-wine32                           add i386 + install wine32:i386
+#   install PKG...                          apt-get install from the enabled
+#                                           repositories (Software Center)
+#   remove PKG...                           apt-get remove (keeps settings)
+#   upgrade                                 apt-get --with-new-pkgs upgrade,
+#                                           after a restore point when
+#                                           updater.conf asks for one
+#   repair                                  dpkg --configure -a; apt-get -f install
+#
+# Package names are checked against Debian's naming rules (at most 50 per
+# call) and passed to apt-get after "--", never through a shell. Nothing
+# here weakens apt: no option that accepts unauthenticated packages is ever
+# passed, so packages from unsigned or untrusted repositories are refused by
+# apt itself. An
+# operation that would remove a package LuxenOS cannot run without (see
+# PROTECTED) is refused before anything changes.
 #
 # Design rules:
 #   * the .deb is read as the *calling user* (so this cannot be used to read
@@ -153,6 +169,96 @@ do_update_lists() {
     do_apt "update" update
 }
 
+# Removing any of these would leave the user without a desktop, network,
+# package manager or bootloader. Keep in sync with luxenos/pkg.py.
+PROTECTED="sway swaybg swaylock swayidle waybar greetd wlgreet network-manager polkitd pkexec sudo systemd dbus apt dpkg python3 python3-gi python3-apt zenity linux-image-amd64 grub-pc grub-efi-amd64-bin foot"
+
+check_names() {
+    [ $# -ge 1 ] || fail "no package names given"
+    [ $# -le 50 ] || fail "too many packages in one request"
+    for n in "$@"; do
+        case $n in
+            [a-z0-9]?*) ;;
+            *) fail "invalid package name: $n" ;;
+        esac
+        case $n in
+            *[!a-z0-9+.:-]*|*-|*::*|*:) fail "invalid package name: $n" ;;
+        esac
+        [ "${#n}" -le 128 ] || fail "invalid package name: $n"
+    done
+}
+
+# refuse_protected_removal APT-ARGS... : simulate first; fail if a protected
+# package would be removed.
+refuse_protected_removal() {
+    sim=$(env LC_ALL=C.UTF-8 apt-get -s -q "$@" 2>&1) || {
+        printf '%s\n' "$sim" | grep '^E:' | while IFS= read -r l; do printf '@@LOG %s\n' "$l"; done
+        fail "apt-get cannot perform this operation"
+    }
+    removed=$(printf '%s\n' "$sim" | sed -n 's/^Remv \([^ ]*\).*/\1/p')
+    for r in $removed; do
+        for p in $PROTECTED; do
+            [ "${r%%:*}" = "$p" ] && fail "refusing: this would remove the protected package $p"
+        done
+    done
+    return 0
+}
+
+do_install_pkgs() {
+    check_names "$@"
+    note "install $*"
+    refuse_protected_removal install -- "$@"
+    status "Installing $*..."
+    do_apt "install $*" install -- "$@"
+    status "Finished installing $*"
+}
+
+do_remove_pkgs() {
+    check_names "$@"
+    note "remove $*"
+    refuse_protected_removal remove -- "$@"
+    status "Removing $*..."
+    do_apt "remove $*" remove -- "$@"
+    status "Finished removing $*"
+}
+
+updater_wants_restore_point() {
+    v=$(sed -n 's/^[[:space:]]*CREATE_BACKUP_BEFORE_UPDATE[[:space:]]*=[[:space:]]*"\{0,1\}\([a-z]*\).*/\1/p' \
+        /etc/luxenos/updater.conf 2>/dev/null | tail -n 1)
+    [ "${v:-yes}" = yes ]
+}
+
+do_upgrade() {
+    note "upgrade"
+    refuse_protected_removal --with-new-pkgs upgrade
+    if updater_wants_restore_point && [ -x /usr/libexec/luxenos/luxenos-restore-root ]; then
+        status "Creating a restore point before updating..."
+        if ! /usr/libexec/luxenos/luxenos-restore-root create --trigger update "Before software update" \
+            >>"$LOG" 2>&1; then
+            printf '@@LOG %s\n' "WARNING: the restore point could not be created; continuing with the update."
+            note "restore point before upgrade FAILED"
+        fi
+    fi
+    status "Installing updates..."
+    do_apt "upgrade" --with-new-pkgs upgrade
+    status "Finished installing updates"
+}
+
+do_repair() {
+    note "repair"
+    status "Finishing interrupted package operations..."
+    off=$(log_size)
+    if ! env DEBIAN_FRONTEND=noninteractive dpkg --configure -a \
+        --force-confdef --force-confold >>"$LOG" 2>&1; then
+        report_failure "$off"
+        note "dpkg --configure -a failed"
+        exit 1
+    fi
+    status "Fixing missing dependencies..."
+    do_apt "fix-broken" -f install
+    status "Repair finished"
+}
+
 do_enable_wine32() {
     [ "$(dpkg --print-architecture)" = amd64 ] || fail "32-bit support is only needed on amd64"
     note "enable-wine32"
@@ -179,6 +285,22 @@ case ${1:-} in
     enable-wine32)
         [ $# -eq 1 ] || fail "usage: enable-wine32"
         do_enable_wine32
+        ;;
+    install)
+        shift
+        do_install_pkgs "$@"
+        ;;
+    remove)
+        shift
+        do_remove_pkgs "$@"
+        ;;
+    upgrade)
+        [ $# -eq 1 ] || fail "usage: upgrade"
+        do_upgrade
+        ;;
+    repair)
+        [ $# -eq 1 ] || fail "usage: repair"
+        do_repair
         ;;
     *)
         fail "unknown action"

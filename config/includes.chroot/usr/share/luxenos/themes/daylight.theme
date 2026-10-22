@@ -1,0 +1,9 @@
+# LuxenOS theme pack.
+THEME_NAME=Daylight Glass
+THEME_DESCRIPTION=Light glass panels with a warm amber accent, for bright rooms.
+GLASS_PRESET=balanced
+GLASS_THEME=light
+GLASS_ACCENT=#d0832f
+GLASS_TINT_DARK=#141a26
+GLASS_TINT_LIGHT=#f4f7fc
+WALLPAPER=/usr/share/backgrounds/luxenos/wallpaper.png

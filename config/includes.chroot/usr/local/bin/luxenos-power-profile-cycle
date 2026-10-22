@@ -1,5 +1,6 @@
 #!/bin/sh
-# Cycles balanced -> powersave -> performance -> balanced ... and asks TLP to
+# Cycles balanced -> powersave -> performance -> balanced ... (or switches to
+# the profile given as the only argument) and asks TLP to
 # apply the corresponding mode through luxenos-power-profile-root (pkexec,
 # no password for the active local session). Falls back to just recording the
 # preference if tlp isn't installed, so this stays safe to run on any session.
@@ -17,6 +18,12 @@ case "$current" in
     powersave)   next="performance" ;;
     performance) next="balanced" ;;
     *)           next="balanced" ;;
+esac
+# An explicit profile (Quick Settings buttons) instead of the next one.
+case ${1:-} in
+    '') ;;
+    balanced|powersave|performance) next=$1 ;;
+    *) echo "usage: luxenos-power-profile-cycle [balanced|powersave|performance]" >&2; exit 2 ;;
 esac
 
 echo "$next" > "$STATE_FILE"

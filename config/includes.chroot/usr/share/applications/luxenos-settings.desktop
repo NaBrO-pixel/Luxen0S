@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+Comment=Appearance, accessibility, dock, network, sound, software and restore points
+Exec=luxenos-settings
+Icon=preferences-system
+Terminal=false
+Categories=Settings;
+Keywords=preferences;control panel;appearance;theme;wallpaper;dock;

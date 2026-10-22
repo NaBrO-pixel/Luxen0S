@@ -50,9 +50,31 @@ alsa-utils
 # time). Audio firmware comes from firmware-linux and firmware-misc-nonfree
 # in base.list.chroot.
 
-# File manager
+# File manager ("Files"): Thunar with archive browsing/extraction
+# (thunar-archive-plugin + xarchiver), automatic mounting of removable drives
+# (thunar-volman, with udisks2/gvfs from base), image thumbnails (tumbler)
+# and video thumbnails (ffmpegthumbnailer; its codecs are already pulled in by mpv).
 thunar
 tumbler
+thunar-archive-plugin
+thunar-volman
+xarchiver
+ffmpegthumbnailer
+
+# LuxenOS desktop apps (launcher, dock, quick settings, workspace overview,
+# Software Center, System Monitor, Restore Center, welcome guide): Python 3 +
+# GTK 4 through PyGObject (GTK 4 itself is already here for zenity),
+# gtk4-layer-shell for the panels, cairo bindings for the monitor graphs and
+# python3-apt to read the package catalogue.
+python3-gi
+python3-gi-cairo
+gir1.2-gtk-4.0
+gir1.2-gtk4layershell-1.0
+python3-apt
+# Quick Settings night light; launcher file search (indexed daily by
+# plocate-updatedb.timer; the launcher falls back to a bounded folder scan).
+wlsunset
+plocate
 
 # Fonts
 fonts-noto

@@ -1,0 +1,60 @@
+#!/bin/sh
+# Verify the LuxenOS desktop apps inside the image and prepare them:
+# executable modes, byte-compiled Python, and a check that every runtime
+# they need is installed, so a missing package fails the build here instead
+# of showing up as an app that silently never opens.
+
+set -eu
+
+log() { echo "[LuxenOS Apps] $*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+LIB=/usr/lib/luxenos/python
+APPS="luxenos-launcher luxenos-dock luxenos-quick-settings luxenos-overview luxenos-monitor
+      luxenos-software luxenos-restore-center luxenos-welcome luxenos-theme"
+
+for f in $APPS luxenos-settings luxenos-restore; do
+    [ -f "/usr/local/bin/$f" ] || die "missing /usr/local/bin/$f"
+    chmod 0755 "/usr/local/bin/$f"
+done
+chmod 0755 /usr/libexec/luxenos/luxenos-restore-root
+[ -d "$LIB/luxenos" ] || die "missing $LIB/luxenos"
+find "$LIB" -type d -exec chmod 0755 {} +
+find "$LIB" -type f -exec chmod 0644 {} +
+
+log "Checking Python runtime (PyGObject, GTK 4, gtk4-layer-shell, python3-apt)"
+python3 - <<'PY' || die "a Python runtime the desktop apps need is missing"
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gtk4LayerShell", "1.0")
+import ctypes
+ctypes.CDLL("libgtk4-layer-shell.so.0")
+import cairo  # noqa: F401  (python3-gi-cairo pulls it in; graphs need it)
+from gi.repository import Gtk4LayerShell  # noqa: F401
+import apt_pkg  # noqa: F401
+PY
+
+log "Byte-compiling and importing the LuxenOS modules"
+python3 -m compileall -q "$LIB/luxenos" || die "LuxenOS Python modules do not compile"
+for m in config swayipc apps filesearch sysinfo quick pkg restore themes welcome; do
+    PYTHONPATH=$LIB python3 -c "import luxenos.$m" || die "luxenos.$m does not import"
+done
+
+log "Checking theme packs"
+for t in /usr/share/luxenos/themes/*.theme; do
+    PYTHONPATH=$LIB python3 -c 'import sys; from luxenos import themes; v, e = themes.load(sys.argv[1]); sys.exit(1 if e else 0)' "$t" \
+        || die "invalid theme pack $t"
+done
+
+if command -v desktop-file-validate >/dev/null 2>&1; then
+    for d in luxenos-software luxenos-monitor luxenos-restore-center luxenos-welcome luxenos-settings luxenos-files; do
+        desktop-file-validate "/usr/share/applications/$d.desktop" || die "invalid $d.desktop"
+    done
+fi
+python3 -c 'import xml.dom.minidom as m; m.parse("/usr/share/polkit-1/actions/org.luxenos.pkg.policy")' \
+    || die "polkit policy is not well-formed XML"
+
+for prog in thunar xarchiver wlsunset; do
+    command -v "$prog" >/dev/null 2>&1 || log "WARNING: $prog missing; its feature reports itself unavailable"
+done
+log "LuxenOS desktop apps verified"

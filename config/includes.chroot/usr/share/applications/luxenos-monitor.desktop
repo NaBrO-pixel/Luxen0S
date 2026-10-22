@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Comment=CPU, memory, disks, network, battery and running processes
+Exec=luxenos-monitor
+Icon=utilities-system-monitor
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.SystemMonitor
+Categories=System;Monitor;
+Keywords=task manager;processes;cpu;memory;ram;disk;kill;battery;

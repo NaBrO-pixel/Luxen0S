@@ -19,7 +19,9 @@ if [ "${1:-}" = accessibility ]; then
     exec sh /usr/local/bin/luxenos-accessibility-settings
 fi
 
-choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 16
+choice=$(cat <<'ITEMS' | pick "$MENU_PROMPT" 18
+Settings
+Quick Settings
 Network & Wi-Fi
 Sound
 Appearance (GTK theme)
@@ -39,6 +41,8 @@ ITEMS
 )
 
 case $choice in
+    "Settings")                 exec luxenos-settings ;;
+    "Quick Settings")           exec luxenos-quick-settings ;;
     "Network & Wi-Fi")          exec luxenos-network ;;
     "Sound")                    exec pavucontrol-qt ;;
     "Appearance (GTK theme)")   exec nwg-look ;;

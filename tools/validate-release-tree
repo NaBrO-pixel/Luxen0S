@@ -133,6 +133,63 @@ do
     check_shell_syntax "$script"
 done
 
+# LuxenOS desktop apps (launcher, dock, quick settings, overview, monitor,
+# Software Center, Restore Center, welcome guide, theme packs, settings).
+for script in \
+    config/includes.chroot/usr/local/bin/luxenos-settings \
+    config/includes.chroot/usr/local/bin/luxenos-restore \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-restore-root \
+    config/hooks/live/0400-luxenos-desktop-apps.hook.chroot
+do
+    check_executable "$script"
+    check_shell_syntax "$script"
+done
+for app in launcher dock quick-settings overview monitor software restore-center welcome theme; do
+    check_executable "config/includes.chroot/usr/local/bin/luxenos-$app"
+done
+for d in luxenos-software luxenos-monitor luxenos-restore-center luxenos-welcome luxenos-settings luxenos-files; do
+    check_file "config/includes.chroot/usr/share/applications/$d.desktop"
+done
+check_file config/includes.chroot/etc/luxenos/dock.conf
+check_file config/includes.chroot/usr/share/luxenos/ui/shell.css
+check_file config/includes.chroot/usr/share/luxenos/logo.png
+ls config/includes.chroot/usr/share/luxenos/themes/*.theme >/dev/null 2>&1 || fail "no theme packs shipped"
+for pkg in python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0 python3-apt; do
+    grep -qx "$pkg" config/package-lists/desktop.list.chroot || fail "$pkg missing from desktop.list.chroot (desktop apps need it)"
+done
+grep -q '/usr/libexec/luxenos/luxenos-restore-root</annotate>' \
+    config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy \
+    || fail "polkit policy does not reference /usr/libexec/luxenos/luxenos-restore-root"
+grep -q 'allow-unauthenticated\|force-yes\|AllowUnauthenticated' \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root config/includes.chroot/usr/lib/luxenos/python/luxenos/*.py \
+    && fail "package tools must never bypass apt's signature checks"
+# Every key binding must be unique in the default Sway config.
+dups=$(sed -n 's/^bindsym \([^ ]*\) .*/\1/p' config/includes.chroot/etc/skel/.config/sway/config | sort | uniq -d)
+[ -z "$dups" ] || fail "duplicate Sway key bindings: $dups"
+for b in '$mod+space exec luxenos-launcher' '$mod+Tab exec luxenos-overview' 'exec luxenos-welcome --first-run'; do
+    grep -qF "$b" config/includes.chroot/etc/skel/.config/sway/config || fail "sway config lacks: $b"
+done
+grep -q 'luxenos/sway.d' config/includes.chroot/etc/skel/.config/sway/config \
+    || fail "sway config does not include the managed per-user fragments"
+if command -v python3 >/dev/null 2>&1; then
+    python3 -m py_compile config/includes.chroot/usr/lib/luxenos/python/luxenos/*.py \
+        || fail "LuxenOS Python modules do not compile"
+    find config/includes.chroot/usr/lib/luxenos -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
+    python3 -m unittest discover -s tests/python -q >/tmp/luxenos-unittest.$$ 2>&1 || {
+        cat /tmp/luxenos-unittest.$$ >&2; rm -f /tmp/luxenos-unittest.$$
+        fail "Python unit tests failed"
+    }
+    rm -f /tmp/luxenos-unittest.$$
+    find tests config/includes.chroot/usr/lib/luxenos -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' config/includes.chroot/etc/skel/.config/waybar/config \
+        || fail "waybar config is not valid JSON"
+    for x in config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy \
+             config/includes.chroot/etc/skel/.config/Thunar/uca.xml \
+             config/includes.chroot/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/thunar.xml; do
+        python3 -c 'import sys, xml.dom.minidom as m; m.parse(sys.argv[1])' "$x" || fail "$x is not well-formed XML"
+    done
+fi
+
 check_file config/includes.chroot/etc/profile.d/luxenos-session.sh
 check_shell_syntax config/includes.chroot/etc/profile.d/luxenos-session.sh
 check_file config/includes.chroot/usr/share/applications/luxenos-android-setup.desktop
@@ -194,6 +251,7 @@ if ! HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
     fail "luxenos-glass apply failed"
 fi
 [ -s "$glass_home/.config/luxenos/glass/waybar.css" ] || { rm -rf "$glass_home"; fail "luxenos-glass produced no waybar.css"; }
+[ -s "$glass_home/.config/luxenos/glass/shell.css" ] || { rm -rf "$glass_home"; fail "luxenos-glass produced no shell.css (LuxenOS apps theme)"; }
 for preset in performance balanced rich; do
     mkdir -p "$glass_home/.config/luxenos"
     printf 'GLASS_PRESET=%s\nGLASS_REDUCE_MOTION=yes\nGLASS_OPACITY=abc\n' "$preset" > "$glass_home/.config/luxenos/glass.conf"
@@ -273,6 +331,9 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
         || fail "invalid luxenos-wine-open.desktop"
     desktop-file-validate config/includes.chroot/usr/share/applications/luxenos-accessibility-settings.desktop \
         || fail "invalid luxenos-accessibility-settings.desktop"
+    for f in config/includes.chroot/usr/share/applications/*.desktop config/includes.chroot/usr/local/share/applications/thunar.desktop; do
+        desktop-file-validate "$f" || fail "invalid $f"
+    done
 fi
 
 # Kiosk / installer boot experience (what the live disc itself boots into)

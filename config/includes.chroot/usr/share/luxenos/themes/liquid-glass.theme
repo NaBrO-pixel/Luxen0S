@@ -1,0 +1,9 @@
+# LuxenOS theme pack. Format: see /usr/lib/luxenos/python/luxenos/themes.py
+THEME_NAME=Liquid Glass
+THEME_DESCRIPTION=The default LuxenOS look: dark translucent glass, soft blue accent, blur where SwayFX runs.
+GLASS_PRESET=balanced
+GLASS_THEME=dark
+GLASS_ACCENT=#7aa2ff
+GLASS_TINT_DARK=#141a26
+GLASS_TINT_LIGHT=#f4f7fc
+WALLPAPER=/usr/share/backgrounds/luxenos/wallpaper.png

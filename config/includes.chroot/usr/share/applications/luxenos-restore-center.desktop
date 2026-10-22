@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Restore Center
+Comment=Create and restore configuration restore points
+Exec=luxenos-restore-center
+Icon=document-revert
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.RestoreCenter
+Categories=System;
+Keywords=backup;restore;rollback;recovery;snapshot;

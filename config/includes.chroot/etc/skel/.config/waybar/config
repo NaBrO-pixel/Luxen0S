@@ -2,7 +2,7 @@
     "include": ["~/.config/luxenos/glass/waybar.json"],
     "modules-left": ["sway/workspaces", "sway/mode"],
     "modules-center": ["clock"],
-    "modules-right": ["custom/power-profile", "pulseaudio", "network", "battery", "tray", "custom/controls"],
+    "modules-right": ["custom/power-profile", "pulseaudio", "network", "battery", "tray", "custom/quick-settings", "custom/controls"],
 
     "sway/workspaces": {
         "disable-scroll": true,
@@ -40,6 +40,11 @@
     },
     "tray": {
         "spacing": 10
+    },
+    "custom/quick-settings": {
+        "format": "\uf1de",
+        "tooltip-format": "Quick Settings (Super+N)",
+        "on-click": "luxenos-quick-settings"
     },
     "custom/controls": {
         "format": "\uf013",
