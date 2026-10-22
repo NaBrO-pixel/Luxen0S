@@ -1,9 +1,30 @@
 #!/bin/sh
-# Lock the screen in the current glass palette (falls back to the default
-# colour if luxenos-glass is unavailable). Extra arguments go to swaylock.
+# Lock the screen in the current liquid-glass look: frosted wallpaper with a
+# glass password indicator, styled by `luxenos-glass lock-args`. Extra
+# arguments go to swaylock.
+#
+# Locking must never fail because of styling: if swaylock rejects the glass
+# options (older swaylock, broken config), lock again with a plain colour.
 color=$(timeout 3 luxenos-glass get base 2>/dev/null)
 case $color in
     [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
     *) color=141a26 ;;
 esac
+
+style=$(timeout 3 luxenos-glass lock-args 2>/dev/null)
+if [ -n "$style" ]; then
+    # One option or value per line (font names may contain spaces).
+    oldifs=$IFS
+    IFS='
+'
+    # shellcheck disable=SC2086  # intentional split on newlines
+    set -- $style "$@"
+    IFS=$oldifs
+    if swaylock -f "$@"; then
+        exit 0
+    fi
+    # Drop the style options again, keep the caller's own arguments.
+    n=$(printf '%s\n' "$style" | wc -l)
+    shift "$n"
+fi
 exec swaylock -f -c "$color" "$@"

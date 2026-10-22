@@ -26,6 +26,12 @@ exec_always luxenos-glass apply
 #   output HDMI-A-1 bg /usr/share/backgrounds/luxenos/wallpaper.png fill pos 1920 0
 output * bg /usr/share/backgrounds/luxenos/wallpaper.png fill
 
+# Password prompts (polkit agent, e.g. .deb installs) open as a centred
+# floating glass dialog, like zenity dialogs, instead of tiling.
+for_window [app_id="org.kde.polkit-kde-authentication-agent-1"] floating enable, move position center
+for_window [app_id="polkit-gnome-authentication-agent-1"] floating enable, move position center
+for_window [class="Polkit-gnome-authentication-agent-1"] floating enable, move position center
+
 # Idle and lock behavior.
 exec swayidle -w \
     timeout 300 'luxenos-lock' \

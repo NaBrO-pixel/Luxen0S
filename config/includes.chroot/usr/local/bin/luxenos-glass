@@ -34,6 +34,8 @@
 #   luxenos-glass get NAME         (base, text, accent, opacity, ... see status)
 #   luxenos-glass status           what is active and why
 #   luxenos-glass namespaces       layer-shell namespaces used for SwayFX effects
+#   luxenos-glass lock-args        swaylock options in the glass palette (one per
+#                                  line; used by luxenos-lock)
 #   luxenos-glass reset            drop your overrides
 #
 # Add --debug (or LUXENOS_GLASS_DEBUG=1) to see why anything was skipped.
@@ -53,7 +55,7 @@ warn() { printf 'luxenos-glass: %s\n' "$*" >&2; }
 debug() { if [ "$DEBUG" != 0 ]; then printf 'luxenos-glass[debug]: %s\n' "$*" >&2; fi; }
 die() { warn "$*"; exit 1; }
 
-# shellcheck disable=SC2317  # invoked via trap
+# shellcheck disable=SC2317,SC2329  # invoked via trap
 cleanup() { if [ -n "$CUR_TMP" ]; then rm -f "$CUR_TMP"; fi; }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -162,6 +164,40 @@ preset_values() {
     esac
 }
 
+# intensity_values 0..100 : the single mapping from the Liquid Glass slider to
+# tunables (I_*). Used by both a system-wide GLASS_INTENSITY default and the
+# per-user `intensity` command, so both give the same look.
+intensity_values() {
+    _i=$1
+    I_OPACITY=$((90 - _i * 35 / 100))
+    I_BORDER_OPACITY=$((12 + _i * 20 / 100))
+    I_SHADOW=$((_i * 60 / 100))
+    I_RADIUS=$((4 + _i * 12 / 100))
+    if [ "$_i" -le 10 ]; then I_BLUR=no; I_BLUR_RADIUS=0
+    else I_BLUR=yes; I_BLUR_RADIUS=$((1 + (_i - 11) * 7 / 89)); fi
+    I_BLUR_PASSES=$((1 + _i * 2 / 100))
+    I_SATURATION=$((100 + _i * 35 / 100))
+    I_BLUR_NOISE=$((_i * 3 / 100))
+    I_BLUR_BRIGHTNESS=$((100 + _i * 5 / 100))
+    I_BLUR_CONTRAST=$((100 + _i * 12 / 100))
+    I_ANIM_MS=$((_i * 2))
+    I_GAPS=$((_i * 8 / 100))
+    I_DIM=$((_i * 6 / 100))
+    I_FALLBACK_OPACITY=$((88 - _i * 23 / 100))
+    I_BORDER_WIDTH=$((1 + _i / 70))
+    I_HIGHLIGHT=$((_i * 30 / 100))
+    I_SHEEN=yes
+    I_ENABLE=yes
+    if [ "$_i" -eq 0 ]; then
+        I_ENABLE=no I_OPACITY=100 I_BORDER_OPACITY=0 I_SHADOW=0 I_RADIUS=0
+        I_BORDER_WIDTH=0 I_HIGHLIGHT=0 I_SHEEN=no
+        I_PRESET=performance
+    elif [ "$_i" -lt 34 ]; then I_PRESET=performance
+    elif [ "$_i" -lt 67 ]; then I_PRESET=balanced
+    else I_PRESET=rich
+    fi
+}
+
 # --------------------------------------------------------------- colours ----
 
 rgb() {   # #rrggbb -> R,G,B
@@ -222,23 +258,13 @@ resolve_config() {
     # GLASS_* values remain authoritative over the calculated values.
     if [ -n "${GLASS_INTENSITY:-}" ]; then
         num GLASS_INTENSITY 0 100 55
-        _i=$GLASS_INTENSITY
-        P_OPACITY=$((90 - _i * 35 / 100))
-        P_BORDER_OPACITY=$((12 + _i * 20 / 100))
-        P_SHADOW=$((_i * 60 / 100))
-        P_RADIUS=$((4 + _i * 12 / 100))
-        if [ "$_i" -eq 0 ]; then P_OPACITY=100; P_BORDER_OPACITY=0; P_RADIUS=0; P_SHADOW=0; fi
-        P_BLUR_PASSES=$((1 + _i * 2 / 100))
-        P_SATURATION=$((100 + _i * 35 / 100))
-        P_BLUR_NOISE=$((_i * 3 / 100))
-        P_BLUR_BRIGHTNESS=$((100 + _i * 5 / 100))
-        P_BLUR_CONTRAST=$((100 + _i * 12 / 100))
-        P_ANIM_MS=$((_i * 2))
-        P_GAPS=$((3 + _i * 5 / 100))
-        P_DIM=$((_i * 6 / 100))
-        if [ "$_i" -le 10 ]; then P_BLUR=no; P_BLUR_RADIUS=0
-        else P_BLUR=yes; P_BLUR_RADIUS=$((1 + (_i - 11) * 7 / 89)); fi
-        if [ "$_i" -eq 0 ] && { [ ! -r "$USER_CONF" ] || ! grep -q "^GLASS_ENABLE=" "$USER_CONF"; }; then
+        intensity_values "$GLASS_INTENSITY"
+        P_BLUR=$I_BLUR P_OPACITY=$I_OPACITY P_BORDER_OPACITY=$I_BORDER_OPACITY
+        P_SHADOW=$I_SHADOW P_RADIUS=$I_RADIUS P_BLUR_RADIUS=$I_BLUR_RADIUS
+        P_BLUR_PASSES=$I_BLUR_PASSES P_SATURATION=$I_SATURATION P_BLUR_NOISE=$I_BLUR_NOISE
+        P_BLUR_BRIGHTNESS=$I_BLUR_BRIGHTNESS P_BLUR_CONTRAST=$I_BLUR_CONTRAST
+        P_ANIM_MS=$I_ANIM_MS P_GAPS=$I_GAPS P_DIM=$I_DIM
+        if [ "$GLASS_INTENSITY" -eq 0 ] && { [ ! -r "$USER_CONF" ] || ! grep -q "^GLASS_ENABLE=" "$USER_CONF"; }; then
             GLASS_ENABLE=no
         fi
     fi
@@ -325,6 +351,7 @@ resolve_effective() {
     SHADOW_A=$(( GLASS_SHADOW * 5 / 10 ))
     if [ "$GLASS_ENABLE" = no ]; then R=0; else R=$GLASS_RADIUS; fi
     R_IN=$(( R > 4 ? R - 4 : 0 ))
+    FONT_PT=$(( (GLASS_FONT_SIZE * 3 + 2) / 4 ))
     BAR_H=$(( GLASS_FONT_SIZE * 2 + 8 ))
 }
 
@@ -359,9 +386,11 @@ detect_compositor() {
 # wlr-layer-shell namespaces are chosen by each client and are NOT exposed by
 # Sway/SwayFX IPC, so they cannot be listed at runtime. Values below were
 # recorded from the real clients (WAYLAND_DEBUG=client): waybar "waybar",
-# wofi "wofi", dunst "notifications". Only components that are installed get
+# wofi "wofi", dunst "notifications". The login screen (wlgreet) is matched as
+# "wlgreet". Only components that are installed get
 # effects; GLASS_NS_BAR / GLASS_NS_LAUNCHER / GLASS_NS_NOTIFY override the
-# namespace list if a component uses another one.
+# namespace list if a component uses another one; GLASS_NS_GREETER does the
+# same for the login screen.
 
 ns_bar() {
     _l=${GLASS_NS_BAR:-}
@@ -383,6 +412,12 @@ ns_notify() {
         if have dunst || have mako; then _l="notifications"; fi
         if have swaync; then _l="$_l swaync-notification-window swaync-control-center"; fi
     fi
+    printf '%s' "$_l"
+}
+
+ns_greeter() {
+    _l=${GLASS_NS_GREETER:-}
+    if [ -z "$_l" ] && have wlgreet; then _l=wlgreet; fi
     printf '%s' "$_l"
 }
 
@@ -613,7 +648,7 @@ CSS
 # (or edit this file / use nwg-look and luxenos-glass will leave it alone).
 gtk-theme-name=Adwaita
 gtk-application-prefer-dark-theme=$dark
-gtk-font-name=$GLASS_FONT $GLASS_FONT_SIZE
+gtk-font-name=$GLASS_FONT $FONT_PT
 gtk-enable-animations=$anim
 INI
     else
@@ -624,7 +659,7 @@ INI
         install_file "$f" <<INI
 [Settings]
 # $MARK by luxenos-glass. Dark/light for GTK4 comes from the desktop color-scheme.
-gtk-font-name=$GLASS_FONT 10
+gtk-font-name=$GLASS_FONT $FONT_PT
 gtk-enable-animations=$anim
 INI
     else
@@ -645,7 +680,7 @@ write_dunst() {
 [global]
     font = $GLASS_FONT $(( GLASS_FONT_SIZE - 2 ))
     corner_radius = $R
-    frame_width = 1
+    frame_width = $GLASS_BORDER_WIDTH
     gap_size = $(( GLASS_GAPS > 0 ? GLASS_GAPS : 4 ))
     padding = 12
     horizontal_padding = 14
@@ -764,9 +799,10 @@ apply_sway() {
     fi
 
     found=0
-    for kind in bar launcher notify; do
+    for kind in bar launcher notify greeter; do
         case $kind in
             bar) nss=$(ns_bar); how=bar ;;
+            greeter) nss=$(ns_greeter); how=bar ;;
             launcher) nss=$(ns_launcher); how=panel ;;
             notify) nss=$(ns_notify); how=panel ;;
         esac
@@ -833,7 +869,7 @@ clear_intensity_keys() {
     CUR_TMP=$tmp
     while IFS= read -r l || [ -n "$l" ]; do
         case $l in
-            GLASS_ENABLE=*|GLASS_PRESET=*|GLASS_INTENSITY=*|GLASS_BLUR=*|GLASS_OPACITY=*|GLASS_BORDER_OPACITY=*|GLASS_SHADOW=*|GLASS_RADIUS=*|GLASS_BLUR_RADIUS=*|GLASS_BLUR_PASSES=*|GLASS_SATURATION=*|GLASS_BLUR_NOISE=*|GLASS_BLUR_BRIGHTNESS=*|GLASS_BLUR_CONTRAST=*|GLASS_ANIM_MS=*|GLASS_GAPS=*|GLASS_DIM_INACTIVE=*|GLASS_BORDER_WIDTH=*|GLASS_SHEEN=*|GLASS_HIGHLIGHT_OPACITY=*) ;;
+            GLASS_ENABLE=*|GLASS_PRESET=*|GLASS_INTENSITY=*|GLASS_BLUR=*|GLASS_OPACITY=*|GLASS_BORDER_OPACITY=*|GLASS_SHADOW=*|GLASS_RADIUS=*|GLASS_BLUR_RADIUS=*|GLASS_BLUR_PASSES=*|GLASS_SATURATION=*|GLASS_BLUR_NOISE=*|GLASS_BLUR_BRIGHTNESS=*|GLASS_BLUR_CONTRAST=*|GLASS_ANIM_MS=*|GLASS_GAPS=*|GLASS_DIM_INACTIVE=*|GLASS_BORDER_WIDTH=*|GLASS_SHEEN=*|GLASS_HIGHLIGHT_OPACITY=*|GLASS_FALLBACK_OPACITY=*) ;;
             *) printf '%s\n' "$l" ;;
         esac
     done < "$USER_CONF" > "$tmp"
@@ -847,52 +883,28 @@ cmd_intensity() {
     [ "$value" -ge 0 ] && [ "$value" -le 100 ] || die "intensity must be between 0 and 100"
     mkdir -p "$CFG/luxenos" || die "cannot create $CFG/luxenos"
     clear_intensity_keys
-    opacity=$((90 - value * 35 / 100))
-    border=$((12 + value * 20 / 100))
-    shadow=$((value * 60 / 100))
-    radius=$((4 + value * 12 / 100))
-    if [ "$value" -le 10 ]; then blur=no; blur_radius=0; else blur=yes; blur_radius=$((1 + (value - 11) * 7 / 89)); fi
-    passes=$((1 + value * 2 / 100))
-    saturation=$((100 + value * 35 / 100))
-    noise=$((value * 3 / 100))
-    brightness=$((100 + value * 5 / 100))
-    contrast=$((100 + value * 12 / 100))
-    anim=$((value * 2))
-    gaps=$((value * 8 / 100))
-    dim=$((value * 6 / 100))
-    fallback_opacity=$((88 - value * 23 / 100))
-    border_width=$((1 + value / 70))
-    highlight=$((value * 30 / 100))
-    if [ "$value" -eq 0 ]; then
-        enable=no; preset=performance; opacity=100; border=0; shadow=0; radius=0
-        blur=no; blur_radius=0; passes=1; saturation=100; noise=0
-        brightness=100; contrast=100; anim=0; gaps=0; dim=0
-        border_width=0; highlight=0; sheen=no
-    elif [ "$value" -lt 34 ]; then enable=yes; preset=performance; sheen=yes
-    elif [ "$value" -lt 67 ]; then enable=yes; preset=balanced; sheen=yes
-    else enable=yes; preset=rich; sheen=yes
-    fi
+    intensity_values "$value"
     set_user_key GLASS_INTENSITY "$value"
-    set_user_key GLASS_ENABLE "$enable"
-    set_user_key GLASS_PRESET "$preset"
-    set_user_key GLASS_BLUR "$blur"
-    set_user_key GLASS_OPACITY "$opacity"
-    set_user_key GLASS_BORDER_OPACITY "$border"
-    set_user_key GLASS_SHADOW "$shadow"
-    set_user_key GLASS_RADIUS "$radius"
-    set_user_key GLASS_BLUR_RADIUS "$blur_radius"
-    set_user_key GLASS_BLUR_PASSES "$passes"
-    set_user_key GLASS_SATURATION "$saturation"
-    set_user_key GLASS_BLUR_NOISE "$noise"
-    set_user_key GLASS_BLUR_BRIGHTNESS "$brightness"
-    set_user_key GLASS_BLUR_CONTRAST "$contrast"
-    set_user_key GLASS_ANIM_MS "$anim"
-    set_user_key GLASS_GAPS "$gaps"
-    set_user_key GLASS_DIM_INACTIVE "$dim"
-    set_user_key GLASS_FALLBACK_OPACITY "$fallback_opacity"
-    set_user_key GLASS_BORDER_WIDTH "$border_width"
-    set_user_key GLASS_SHEEN "$sheen"
-    set_user_key GLASS_HIGHLIGHT_OPACITY "$highlight"
+    set_user_key GLASS_ENABLE "$I_ENABLE"
+    set_user_key GLASS_PRESET "$I_PRESET"
+    set_user_key GLASS_BLUR "$I_BLUR"
+    set_user_key GLASS_OPACITY "$I_OPACITY"
+    set_user_key GLASS_BORDER_OPACITY "$I_BORDER_OPACITY"
+    set_user_key GLASS_SHADOW "$I_SHADOW"
+    set_user_key GLASS_RADIUS "$I_RADIUS"
+    set_user_key GLASS_BLUR_RADIUS "$I_BLUR_RADIUS"
+    set_user_key GLASS_BLUR_PASSES "$I_BLUR_PASSES"
+    set_user_key GLASS_SATURATION "$I_SATURATION"
+    set_user_key GLASS_BLUR_NOISE "$I_BLUR_NOISE"
+    set_user_key GLASS_BLUR_BRIGHTNESS "$I_BLUR_BRIGHTNESS"
+    set_user_key GLASS_BLUR_CONTRAST "$I_BLUR_CONTRAST"
+    set_user_key GLASS_ANIM_MS "$I_ANIM_MS"
+    set_user_key GLASS_GAPS "$I_GAPS"
+    set_user_key GLASS_DIM_INACTIVE "$I_DIM"
+    set_user_key GLASS_FALLBACK_OPACITY "$I_FALLBACK_OPACITY"
+    set_user_key GLASS_BORDER_WIDTH "$I_BORDER_WIDTH"
+    set_user_key GLASS_SHEEN "$I_SHEEN"
+    set_user_key GLASS_HIGHLIGHT_OPACITY "$I_HIGHLIGHT"
     cmd_apply || return $?
     reload_ui
 }
@@ -969,7 +981,7 @@ border            ${BOP}% x ${GLASS_BORDER_WIDTH}px
 radius            ${R}px
 shadow            $GLASS_SHADOW
 animation         ${GLASS_ANIM_MS}ms  (reduce motion: $GLASS_REDUCE_MOTION)
-intensity          $(cmd_get intensity 2>/dev/null)%
+intensity         $(cmd_get intensity 2>/dev/null)%
 gaps              ${GLASS_GAPS}px
 accent            $GLASS_ACCENT
 font              $GLASS_FONT ${GLASS_FONT_SIZE}px
@@ -981,7 +993,49 @@ cmd_namespaces() {
     printf 'bar        %s\n' "$(ns_bar)"
     printf 'launcher   %s\n' "$(ns_launcher)"
     printf 'notify     %s\n' "$(ns_notify)"
+    printf 'greeter    %s\n' "$(ns_greeter)"
     printf '\nNamespaces are chosen by each program and are not listed by Sway IPC.\nTo verify one: WAYLAND_DEBUG=client <program> 2>&1 | grep get_layer_surface\n'
+}
+
+# Lock screen: swaylock options that draw the password indicator as a glass
+# disc (tinted panel, thin light ring, accent on key press) over a frosted
+# copy of the wallpaper. swaylock cannot blur, so the backdrop is pre-blurred
+# and the panel uses the no-blur opacity rules (fallback floor + contrast).
+# Config only; never touches the compositor, so it is fast and side-effect
+# free. Every option exists in stock swaylock >= 1.5.
+LOCK_BG=/usr/share/backgrounds/luxenos/wallpaper-blur.png
+cmd_lock_args() {
+    resolve_config
+    FX_CAPABLE=no
+    resolve_effective
+    inside=$(hex8 "${BASE#'#'}" "$OPA")
+    ring=$(hex8 "${BORDER_HEX#'#'}" "$(min2 100 $(( BOP + 20 )))")
+    acc=$(hex8 "${GLASS_ACCENT#'#'}" 100)
+    crit=$(hex8 "${CRIT#'#'}" 100)
+    warn=$(hex8 "${WARN#'#'}" 100)
+    text=$(hex8 "${TEXT#'#'}" 100)
+    clear=00000000
+    if [ -r "$LOCK_BG" ] && [ "$GLASS_ENABLE" = yes ]; then
+        printf '%s\n' --image "$LOCK_BG" --scaling fill
+    fi
+    printf '%s\n' --color "${BASE#'#'}" \
+        --inside-color "$inside" --inside-clear-color "$inside" \
+        --inside-ver-color "$inside" --inside-wrong-color "$inside" \
+        --inside-caps-lock-color "$inside" \
+        --ring-color "$ring" --ring-clear-color "$warn" \
+        --ring-ver-color "$acc" --ring-wrong-color "$crit" \
+        --ring-caps-lock-color "$warn" \
+        --line-color "$clear" --line-clear-color "$clear" \
+        --line-ver-color "$clear" --line-wrong-color "$clear" \
+        --line-caps-lock-color "$clear" --separator-color "$clear" \
+        --key-hl-color "$acc" --bs-hl-color "$crit" \
+        --caps-lock-key-hl-color "$acc" --caps-lock-bs-hl-color "$crit" \
+        --text-color "$text" --text-clear-color "$text" \
+        --text-ver-color "$text" --text-wrong-color "$text" \
+        --text-caps-lock-color "$text" \
+        --font "$GLASS_FONT" --font-size $(( GLASS_FONT_SIZE * 2 )) \
+        --indicator-radius 84 --indicator-thickness 4 \
+        --indicator-idle-visible --show-failed-attempts
 }
 
 # ---------------------------------------------------------------- dispatch --
@@ -1129,6 +1183,7 @@ case "${1:-}" in
         ;;
     status) cmd_status ;;
     namespaces) cmd_namespaces ;;
+    lock-args) cmd_lock_args ;;
     *)
         sed -n '/^# Usage:/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
         exit 2
