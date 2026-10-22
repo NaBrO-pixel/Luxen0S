@@ -89,8 +89,12 @@ check_shell_syntax config/hooks/live/0300-setup-auto-updates.hook.chroot
 # Liquid-glass theme, .deb / .exe double-click integration
 check_file config/includes.chroot/etc/luxenos/glass.conf
 check_file config/includes.chroot/usr/share/backgrounds/luxenos/wallpaper-blur.png
-grep -q 'luxenos-glass apply --sway-only' config/includes.chroot/etc/greetd/sway-config \
-    || fail "greeter compositor does not apply the glass look"
+grep -q '/usr/libexec/luxenos/luxenos-greeter' config/includes.chroot/etc/greetd/sway-config \
+    || fail "greeter compositor does not start the glass login screen"
+grep -q 'wallpaper-blur.png' config/includes.chroot/etc/greetd/sway-config \
+    || fail "greeter compositor does not use the frosted wallpaper"
+grep -qx 'qt6ct' config/package-lists/desktop.list.chroot \
+    || fail "qt6ct missing: Qt dialogs would not follow the glass palette"
 check_file config/includes.chroot/etc/luxenos/wine.conf
 check_file config/includes.chroot/etc/xdg/mimeapps.list
 check_file config/includes.chroot/etc/skel/.config/wofi/config
@@ -117,6 +121,7 @@ for script in \
     config/includes.chroot/usr/libexec/luxenos/luxenos-live-access \
     config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root \
     config/includes.chroot/usr/libexec/luxenos/enable-greetd.sh \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-greeter \
     config/includes.chroot/usr/local/bin/luxenos-sway-session
 do
     check_executable "$script"
@@ -202,6 +207,20 @@ printf '%s\n' "$lock_args" | grep -qx -- '--inside-color' \
 grep -q 'luxenos-glass lock-args' config/includes.chroot/usr/local/bin/luxenos-lock \
     || { rm -rf "$glass_home"; fail "luxenos-lock does not use the glass lock-screen style"; }
 
+# The login screen config must be generated and parse as wlgreet expects.
+HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass greeter-config > "$glass_home/wlgreet.toml" 2>/dev/null
+for section in background headline prompt promptErr border; do
+    grep -qx "\[$section\]" "$glass_home/wlgreet.toml" \
+        || { rm -rf "$glass_home"; fail "luxenos-glass greeter-config lacks [$section]"; }
+done
+# Qt dialogs (polkit prompt) must get a complete glass palette for qt6ct.
+qt_scheme="$glass_home/.config/qt6ct/colors/luxenos-glass.conf"
+[ -s "$qt_scheme" ] || { rm -rf "$glass_home"; fail "luxenos-glass produced no qt6ct colour scheme"; }
+roles=$(sed -n 's/^active_colors=//p' "$qt_scheme" | tr ',' '\n' | grep -c '#ff[0-9a-f]\{6\}')
+[ "$roles" -eq 22 ] || { rm -rf "$glass_home"; fail "qt6ct colour scheme has $roles colour roles, need 22"; }
+
 # A configured system-wide intensity must drive the generated theme when no
 # per-user override exists.
 system_glass_conf="$glass_home/system-glass.conf"
@@ -285,8 +304,8 @@ grep -q '/usr/libexec/luxenos/enable-greetd.sh' \
 # greetd must launch Sway through the wrapper that sets the software-renderer fallback.
 grep -q 'luxenos-sway-session' config/includes.chroot/etc/greetd/config.toml \
     || fail "greetd config.toml does not start Sway via luxenos-sway-session"
-grep -q 'luxenos-sway-session' config/includes.chroot/etc/greetd/sway-config \
-    || fail "greetd sway-config does not start wlgreet's session via luxenos-sway-session"
+grep -q 'wlgreet .*--command /usr/local/bin/luxenos-sway-session' config/includes.chroot/usr/libexec/luxenos/luxenos-greeter \
+    || fail "luxenos-greeter does not start wlgreet's session via luxenos-sway-session"
 # The update timer must fire once a day, not once for "daily" and once for 02:00.
 [ "$(grep -c '^OnCalendar=' config/includes.chroot/etc/systemd/system/luxenos-auto-update.timer)" -eq 1 ] \
     || fail "luxenos-auto-update.timer must have exactly one OnCalendar= line"

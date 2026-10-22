@@ -20,6 +20,9 @@ if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ] \
     && command -v sway >/dev/null 2>&1; then
 
     export XDG_CURRENT_DESKTOP=sway XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=sway
+    # Qt apps (polkit password prompt, pavucontrol-qt) follow the glass
+    # palette that luxenos-glass writes for qt6ct.
+    export QT_QPA_PLATFORMTHEME=qt6ct
 
     # Machines without a working GPU driver (most VMs, brand-new GPUs) only
     # have Mesa's software renderer (llvmpipe), which wlroots refuses unless

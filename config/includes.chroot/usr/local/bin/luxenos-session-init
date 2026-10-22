@@ -34,7 +34,7 @@ start_once() {
 if have dbus-update-activation-environment; then
     if ! { have systemctl && systemctl --user show-environment 2>/dev/null | grep -q '^WAYLAND_DISPLAY='; }; then
         dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY SWAYSOCK \
-            XDG_CURRENT_DESKTOP XDG_SESSION_TYPE >/dev/null 2>&1 \
+            XDG_CURRENT_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORMTHEME >/dev/null 2>&1 \
             || log "could not export session environment"
     fi
 fi

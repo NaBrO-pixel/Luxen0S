@@ -60,7 +60,7 @@ for f in /usr/local/bin/luxenos-glass /usr/local/bin/luxenos-waybar \
          /usr/local/bin/luxenos-deb-install /usr/local/bin/luxenos-wine-open \
          /usr/local/bin/luxenos-session-init /usr/local/bin/luxenos-network \
          /usr/local/bin/luxenos-lock /usr/local/bin/luxenos-setup-android \
-         /usr/libexec/luxenos/luxenos-pkg-root; do
+         /usr/libexec/luxenos/luxenos-pkg-root /usr/libexec/luxenos/luxenos-greeter; do
     [ -x "$f" ] || die "missing or not executable: $f"
     sh -n "$f" || die "shell syntax error in $f"
 done

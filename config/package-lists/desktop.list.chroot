@@ -28,6 +28,9 @@ brightnessctl
 dunst
 nwg-look
 polkit-kde-agent-1
+# Qt apps (polkit-kde password prompt, pavucontrol-qt) get the glass palette
+# through qt6ct (QT_QPA_PLATFORMTHEME=qt6ct, config from luxenos-glass).
+qt6ct
 
 # Audio
 pipewire
