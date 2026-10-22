@@ -56,7 +56,7 @@ bindsym $mod+l exec luxenos-lock
 # Screenshots and annotation.
 # Print          -> full screen capture to clipboard + ~/Pictures
 # Shift+Print     -> select a region, then open it in swappy to annotate
-bindsym Print exec grim - | wl-copy && grim ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
+bindsym Print exec grim - | tee ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png | wl-copy
 bindsym $mod+Shift+s exec grim -g "$(slurp)" - | swappy -f -
 
 # Power profile (tied to tlp; also shown/clickable in Waybar).

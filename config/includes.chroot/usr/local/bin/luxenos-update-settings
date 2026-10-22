@@ -14,6 +14,7 @@ set -e
 
 CONFIG_FILE="/etc/luxenos/updater.conf"
 TIMER_NAME="luxenos-auto-update.timer"
+TIMER_DROPIN="/etc/systemd/system/luxenos-auto-update.timer.d/luxenos-time.conf"
 
 # Colors
 GREEN='\033[0;32m'
@@ -46,6 +47,21 @@ check_root() {
     fi
 }
 
+# Make the timer run at AUTO_UPDATE_TIME (HH:MM). The shipped timer says 02:00;
+# a drop-in replaces that, so the setting in updater.conf is what really runs.
+apply_timer_schedule() {
+    local t
+    t=$(grep '^AUTO_UPDATE_TIME=' "$CONFIG_FILE" | tail -n 1 | cut -d= -f2 | tr -d '[:space:]"')
+    if ! [[ $t =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+        log_warn "AUTO_UPDATE_TIME='$t' is not HH:MM; keeping the timer's 02:00 default"
+        rm -f "$TIMER_DROPIN"
+    else
+        mkdir -p "$(dirname "$TIMER_DROPIN")"
+        printf '# Written by luxenos-update-settings from AUTO_UPDATE_TIME.\n[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' "$t" > "$TIMER_DROPIN"
+    fi
+    systemctl daemon-reload 2>/dev/null || log_warn "Could not reload systemd"
+}
+
 # Enable automatic updates
 enable_auto_updates() {
     check_root
@@ -59,6 +75,7 @@ enable_auto_updates() {
     
     # Update config
     sed -i 's/^ENABLE_AUTO_UPDATES=.*/ENABLE_AUTO_UPDATES=yes/' "$CONFIG_FILE"
+    apply_timer_schedule
     
     # Enable systemd timer
     if systemctl enable "$TIMER_NAME" 2>/dev/null; then
@@ -67,7 +84,7 @@ enable_auto_updates() {
         log_warn "Could not enable systemd timer (may not be installed)"
     fi
     
-    if systemctl start "$TIMER_NAME" 2>/dev/null; then
+    if systemctl restart "$TIMER_NAME" 2>/dev/null; then
         log_info "Systemd timer started"
     else
         log_warn "Could not start systemd timer"
@@ -176,6 +193,10 @@ configure_updates() {
     
     # Update time
     read -p "Time to run updates (HH:MM) [$(grep '^AUTO_UPDATE_TIME' "$CONFIG_FILE" | cut -d= -f2)]: " update_time
+    if [ -n "$update_time" ] && ! [[ $update_time =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+        log_warn "'$update_time' is not a time like 02:00; keeping the current time"
+        update_time=""
+    fi
     if [ -n "$update_time" ]; then
         sed -i "s/^AUTO_UPDATE_TIME=.*/AUTO_UPDATE_TIME=$update_time/" "$CONFIG_FILE"
     fi
@@ -210,7 +231,10 @@ configure_updates() {
         sed -i "s/^UPDATE_FLATPAKS=.*/UPDATE_FLATPAKS=$update_flatpaks/" "$CONFIG_FILE"
     fi
     
-    # Apply settings
+    # Apply settings (an empty answer kept the current value)
+    if [ -z "$enable_updates" ]; then
+        enable_updates=$(grep '^ENABLE_AUTO_UPDATES=' "$CONFIG_FILE" | tail -n 1 | cut -d= -f2)
+    fi
     if [ "${enable_updates,,}" = "yes" ]; then
         enable_auto_updates
     else

@@ -1,0 +1,18 @@
+#!/bin/sh
+# luxenos-power-profile-root - the privileged half of
+# luxenos-power-profile-cycle. Started through pkexec (polkit action
+# org.luxenos.power.profile: allowed without a password for the active local
+# session, like power-profiles-daemon). Accepts exactly one TLP mode and
+# nothing else.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+[ "$(id -u)" -eq 0 ] || { echo "luxenos-power-profile-root: must run as root (through pkexec)" >&2; exit 1; }
+[ $# -eq 1 ] || { echo "usage: luxenos-power-profile-root bat|ac|start" >&2; exit 2; }
+case $1 in
+    bat|ac|start) ;;
+    *) echo "luxenos-power-profile-root: unknown mode '$1'" >&2; exit 2 ;;
+esac
+command -v tlp >/dev/null 2>&1 || { echo "luxenos-power-profile-root: tlp is not installed" >&2; exit 1; }
+exec tlp "$1"

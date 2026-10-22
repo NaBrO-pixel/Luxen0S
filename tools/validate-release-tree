@@ -19,7 +19,10 @@ check_executable() {
 
 check_shell_syntax() {
     check_file "$1"
-    if ! sh -n "$1" 2>/tmp/luxenos-syntax-err.$$; then
+    # Parse with the script's own shell: bash scripts use bash syntax.
+    shell="sh"
+    case $(head -n 1 "$1") in '#!'*bash*) shell=bash ;; esac
+    if ! "$shell" -n "$1" 2>/tmp/luxenos-syntax-err.$$; then
         cat /tmp/luxenos-syntax-err.$$ >&2
         rm -f /tmp/luxenos-syntax-err.$$
         fail "shell syntax error in: $1"
@@ -120,6 +123,8 @@ for script in \
     config/includes.chroot/usr/local/bin/luxenos-installer \
     config/includes.chroot/usr/libexec/luxenos/luxenos-live-access \
     config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-power-profile-root \
+    config/includes.chroot/usr/local/bin/luxenos-power-profile-cycle \
     config/includes.chroot/usr/libexec/luxenos/enable-greetd.sh \
     config/includes.chroot/usr/libexec/luxenos/luxenos-greeter \
     config/includes.chroot/usr/local/bin/luxenos-sway-session
@@ -153,6 +158,15 @@ for key in $(sed -n 's/^#\{0,1\}\(GLASS_[A-Z_]*\)=.*/\1/p' config/includes.chroo
 done
 
 # The polkit action must point at the exact helper path that ships in the image.
+grep -q '/usr/libexec/luxenos/luxenos-power-profile-root</annotate>' \
+    config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy \
+    || fail "polkit policy does not reference /usr/libexec/luxenos/luxenos-power-profile-root"
+grep -qx 'swaybg' config/package-lists/desktop.list.chroot \
+    || fail "swaybg missing: 'output * bg' wallpapers would not be drawn"
+grep -q 'enable-greetd.sh' config/includes.installer/preseed.cfg \
+    || fail "preseed late_command does not enable greetd (traditional installs)"
+grep -q '^Requires=luxenos-auto-update.service' config/includes.chroot/etc/systemd/system/luxenos-auto-update.timer \
+    && fail "auto-update timer must not Require its service (runs the update at every boot)"
 grep -q '/usr/libexec/luxenos/luxenos-pkg-root</annotate>' \
     config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy \
     || fail "polkit policy does not reference /usr/libexec/luxenos/luxenos-pkg-root"
@@ -317,7 +331,7 @@ grep -q '/usr/libexec/luxenos/luxenos-finish-install' \
 
 # Traditional (Debian installer) image
 check_file config/includes.installer/preseed.cfg
-grep -q '^d-i preseed/late_command string in-target /usr/libexec/luxenos/luxenos-finish-install$' \
+grep -q '^d-i preseed/late_command string in-target /usr/libexec/luxenos/luxenos-finish-install; in-target /usr/libexec/luxenos/enable-greetd.sh$' \
     config/includes.installer/preseed.cfg \
     || fail "preseed.cfg does not run luxenos-finish-install as its late_command"
 grep -q '^d-i pkgsel/run_tasksel boolean false$' config/includes.installer/preseed.cfg \

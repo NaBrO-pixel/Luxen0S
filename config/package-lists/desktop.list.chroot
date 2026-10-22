@@ -13,6 +13,9 @@
 sway
 swaylock
 swayidle
+# Draws every `output * bg` wallpaper (desktop, greeter, installer kiosk).
+# Only a Recommends of sway, and the image is built without Recommends.
+swaybg
 waybar
 xwayland
 xdg-desktop-portal
@@ -27,6 +30,10 @@ wl-clipboard
 brightnessctl
 dunst
 nwg-look
+# Flathub is added by hook 0200; luxenos-updater and luxenos-health-check use
+# both of these.
+flatpak
+fwupd
 polkit-kde-agent-1
 # Qt apps (polkit-kde password prompt, pavucontrol-qt) get the glass palette
 # through qt6ct (QT_QPA_PLATFORMTHEME=qt6ct, config from luxenos-glass).

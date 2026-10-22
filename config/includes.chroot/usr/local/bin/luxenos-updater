@@ -21,8 +21,43 @@ LUXENOS_UPDATE_LOG="/var/log/luxenos-updates.log"
 LUXENOS_BACKUP_DIR="/var/backups/luxenos"
 LUXENOS_UPDATE_CACHE="/var/cache/luxenos-updates"
 
+LUXENOS_UPDATER_CONF="/etc/luxenos/updater.conf"
+
 # Create necessary directories
 mkdir -p "$LUXENOS_BACKUP_DIR" "$LUXENOS_UPDATE_CACHE"
+
+# Settings from updater.conf (changed with luxenos-update-settings). The file
+# is parsed, never sourced; unknown keys and invalid values are ignored.
+UPDATE_PACKAGES=yes
+UPDATE_WAYDROID=yes
+UPDATE_FLATPAKS=yes
+UPDATE_FIRMWARE=yes
+AUTO_INSTALL_SECURITY=yes
+CREATE_BACKUP_BEFORE_UPDATE=yes
+BACKUP_RETENTION=5
+UPDATES_ON_AC_ONLY=yes
+
+load_updater_conf() {
+    [ -r "$LUXENOS_UPDATER_CONF" ] || return 0
+    local line key val
+    while IFS= read -r line || [ -n "$line" ]; do
+        case $line in ''|'#'*) continue ;; esac
+        key=${line%%=*}
+        val=${line#*=}
+        val=${val%%#*}
+        val=${val//[[:space:]]/}
+        val=${val#\"}
+        val=${val%\"}
+        case $key in
+            UPDATE_PACKAGES|UPDATE_WAYDROID|UPDATE_FLATPAKS|UPDATE_FIRMWARE|\
+            AUTO_INSTALL_SECURITY|CREATE_BACKUP_BEFORE_UPDATE|UPDATES_ON_AC_ONLY)
+                case $val in yes|no) printf -v "$key" '%s' "$val" ;; esac ;;
+            BACKUP_RETENTION)
+                case $val in ''|*[!0-9]*|0) ;; *) BACKUP_RETENTION=$val ;; esac ;;
+        esac
+    done < "$LUXENOS_UPDATER_CONF"
+}
+load_updater_conf
 
 # ============================================================================
 # Colors and Output
@@ -48,6 +83,29 @@ log_error() {
 
 log_section() {
     echo -e "\n${BLUE}=== $* ===${NC}" | tee -a "$LUXENOS_UPDATE_LOG"
+}
+
+# run_logged CMD... : run CMD with its output shown and appended to the log,
+# returning CMD's own exit status (a plain "cmd | tee" pipeline would return
+# tee's, so failures went unnoticed).
+run_logged() {
+    "$@" 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
+    return "${PIPESTATUS[0]}"
+}
+
+# True when running on battery: a battery is present and no AC adapter is
+# online. Desktops (no battery) always count as on AC.
+on_battery() {
+    local ps have_battery=no
+    for ps in /sys/class/power_supply/*; do
+        [ -r "$ps/type" ] || continue
+        case $(cat "$ps/type") in
+            Mains|USB|USB_C|USB_PD)
+                [ "$(cat "$ps/online" 2>/dev/null)" = 1 ] && return 1 ;;
+            Battery) have_battery=yes ;;
+        esac
+    done
+    [ "$have_battery" = yes ]
 }
 
 progress_bar() {
@@ -137,8 +195,8 @@ Hostname: $(hostname)
 Disk Space Used: $(du -sh / 2>/dev/null | cut -f1)
 EOF
     
-    # Keep only last 5 backups to save space
-    ls -t "${LUXENOS_BACKUP_DIR:?}" | tail -n +6 | while IFS= read -r old_backup; do
+    # Keep only the last BACKUP_RETENTION backups to save space
+    ls -t "${LUXENOS_BACKUP_DIR:?}" | tail -n +$((BACKUP_RETENTION + 1)) | while IFS= read -r old_backup; do
         [ -n "$old_backup" ] || continue
         log_warn "Removing old backup: $old_backup"
         rm -rf "${LUXENOS_BACKUP_DIR:?}/$old_backup"
@@ -155,7 +213,7 @@ EOF
 update_package_cache() {
     log_section "Updating Package Cache"
     
-    if ! apt-get update 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+    if ! run_logged apt-get update; then
         log_error "Failed to update package cache"
         return 1
     fi
@@ -182,20 +240,34 @@ list_available_updates() {
         tee -a "$LUXENOS_UPDATE_LOG"
 }
 
+# Security updates only: unattended-upgrade installs exactly the origins in
+# /etc/apt/apt.conf.d/50unattended-upgrades (Debian-Security by default).
+install_security_updates() {
+    log_info "Installing security updates..."
+    if ! command -v unattended-upgrade >/dev/null 2>&1; then
+        log_warn "unattended-upgrade is not installed; security updates come with the standard updates"
+        return 0
+    fi
+    if ! run_logged unattended-upgrade -v; then
+        log_error "Security update installation failed"
+        return 1
+    fi
+    log_info "✓ Security updates installed"
+}
+
 perform_upgrade() {
     log_section "Installing Package Updates"
     
     # First: security updates
-    log_info "Installing security updates..."
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install \
-        --only-upgrade -y -qq 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
-        log_error "Security update installation failed"
-        return 1
+    if [ "$AUTO_INSTALL_SECURITY" = yes ]; then
+        install_security_updates || return 1
     fi
     
-    # Second: full upgrade
+    # Second: everything else. --with-new-pkgs lets upgrades pull in new
+    # packages (e.g. the new linux-image-* a kernel update depends on) without
+    # ever removing anything; a plain "upgrade" holds those back for good.
     log_info "Installing standard updates..."
-    if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+    if ! DEBIAN_FRONTEND=noninteractive run_logged apt-get upgrade --with-new-pkgs -y -qq; then
         log_error "Package upgrade failed"
         return 1
     fi
@@ -231,7 +303,7 @@ update_waydroid() {
         fi
         
         log_info "Installing Waydroid update..."
-        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y waydroid 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        if ! DEBIAN_FRONTEND=noninteractive run_logged apt-get install -y --only-upgrade waydroid; then
             log_error "Waydroid update failed"
             return 1
         fi
@@ -275,12 +347,12 @@ check_system_health() {
     log_section "System Health Check"
     
     # Check broken dependencies
-    if apt-get check 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+    if run_logged apt-get check; then
         log_info "✓ No broken dependencies"
     else
         log_error "Broken dependencies detected"
         log_info "Running: apt-get --fix-broken install"
-        if ! apt-get --fix-broken install -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        if ! DEBIAN_FRONTEND=noninteractive run_logged apt-get --fix-broken install -y; then
             log_error "Could not fix broken dependencies automatically"
         fi
     fi
@@ -353,12 +425,16 @@ update_firmware() {
     fi
     
     log_info "Checking for firmware updates..."
-    if ! fwupdmgr refresh 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+    # fwupdmgr refresh exits 2 when the metadata is already current.
+    local rc=0
+    run_logged fwupdmgr refresh --assume-yes || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
         log_warn "Could not refresh firmware metadata"
         return 0
     fi
     
-    if fwupdmgr get-updates 2>&1 | tee -a "$LUXENOS_UPDATE_LOG" | grep -q "Update"; then
+    # get-updates exits 0 only when updates are available (2 = none).
+    if run_logged fwupdmgr get-updates --assume-yes; then
         log_info "Firmware updates available"
         if [ "$AUTO_MODE" != "1" ]; then
             read -p "Install firmware updates? (y/n) " -n 1 -r
@@ -370,7 +446,9 @@ update_firmware() {
         fi
         
         log_info "Installing firmware updates..."
-        if fwupdmgr update 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"; then
+        # --assume-yes: no prompts (there is no terminal in auto mode);
+        # --no-reboot-check: a needed reboot is left to the user.
+        if run_logged fwupdmgr update --assume-yes --no-reboot-check; then
             log_info "✓ Firmware updated"
         else
             log_error "Firmware update failed"
@@ -589,13 +667,23 @@ EOF
     log_info "LuxenOS Updater started ($(date))"
     
     if [ "$AUTO_MODE" = "1" ]; then
-        # Automatic mode: perform full update
-        create_backup
+        # Automatic mode: perform the updates enabled in updater.conf
+        if [ "$UPDATES_ON_AC_ONLY" = yes ] && on_battery; then
+            log_warn "Running on battery and UPDATES_ON_AC_ONLY=yes; skipping automatic update"
+            exit 0
+        fi
+        if [ "$CREATE_BACKUP_BEFORE_UPDATE" = yes ]; then
+            create_backup
+        fi
         update_package_cache
-        perform_upgrade
-        update_waydroid
-        update_flatpaks
-        update_firmware
+        if [ "$UPDATE_PACKAGES" = yes ]; then
+            perform_upgrade
+        elif [ "$AUTO_INSTALL_SECURITY" = yes ]; then
+            install_security_updates
+        fi
+        if [ "$UPDATE_WAYDROID" = yes ]; then update_waydroid; fi
+        if [ "$UPDATE_FLATPAKS" = yes ]; then update_flatpaks; fi
+        if [ "$UPDATE_FIRMWARE" = yes ]; then update_firmware; fi
         check_system_health
         cleanup_system
         generate_report
@@ -614,7 +702,7 @@ EOF
             case $choice in
                 1) update_package_cache && check_available_updates ;;
                 2) create_backup && update_package_cache && perform_upgrade && generate_report ;;
-                3) create_backup && update_package_cache && apt-get install -y --only-upgrade 2>&1 | tee -a "$LUXENOS_UPDATE_LOG" ;;
+                3) create_backup && update_package_cache && install_security_updates ;;
                 4) list_available_updates ;;
                 5) update_waydroid ;;
                 6) update_flatpaks ;;

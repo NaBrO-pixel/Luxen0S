@@ -36,18 +36,21 @@ if [ ! -s "$BASE_PROP" ]; then
     fi
 fi
 
-echo "Starting Waydroid session..."
-if ! waydroid session start; then
-    echo "Could not start the Waydroid session."
-    echo "Check: waydroid status"
-    echo "Logs: waydroid log"
-    exit 1
+session_running() {
+    waydroid status 2>&1 | grep -qiE 'Session:[[:space:]]*RUNNING'
+}
+
+# `waydroid session start` stays in the foreground for as long as the session
+# runs, so start it in the background and wait for RUNNING below. The Sway
+# config usually started it at login already.
+if ! session_running; then
+    echo "Starting Waydroid session..."
+    (setsid waydroid session start >/dev/null 2>&1 &)
 fi
 
 attempt=0
 while [ "$attempt" -lt 30 ]; do
-    status=$(waydroid status 2>&1 || true)
-    if printf '%s\n' "$status" | grep -qiE 'Session:[[:space:]]*RUNNING'; then
+    if session_running; then
         break
     fi
     sleep 2
