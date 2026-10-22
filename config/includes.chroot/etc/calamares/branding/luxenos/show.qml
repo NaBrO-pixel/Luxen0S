@@ -35,10 +35,12 @@ Presentation {
         presentation.goToNextSlide();
     }
 
+    // Presentation has no "timer" property: advance the slides with our own
+    // timer while Calamares shows the slideshow (as Debian's show.qml does).
     Timer {
-        interval: 1
-        running: true
-        repeat: false
-        onTriggered: presentation.timer.start()
+        interval: 10000
+        running: presentation.activatedInCalamares
+        repeat: true
+        onTriggered: nextSlide()
     }
 }

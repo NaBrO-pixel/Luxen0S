@@ -1,5 +1,8 @@
-# Minimal LuxenOS Plymouth script theme: branded background + a centered
-# spinner, so boot still gives visual feedback without extra assets.
+# Minimal LuxenOS Plymouth script theme: branded background, a pulsing
+# progress dot row, and the prompts Plymouth asks a theme to draw. A script
+# theme must show the disk-encryption passphrase prompt itself
+# (SetDisplayPasswordFunction); without it an encrypted install would sit at
+# an invisible prompt.
 
 Window.SetBackgroundTopColor(0.114, 0.137, 0.188);    # #1d2330
 Window.SetBackgroundBottomColor(0.180, 0.212, 0.314); # #2e3650
@@ -8,9 +11,79 @@ logo.image = Image("luxenos-background.png");
 logo.sprite = Sprite(logo.image);
 logo.sprite.SetX(Window.GetWidth()  / 2 - logo.image.GetWidth()  / 2);
 logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2);
+logo.sprite.SetZ(0);
 
+# Text sits below the centre (and below the logo when it fits on screen).
+text_y = Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 24;
+if (text_y > Window.GetHeight() - 120)
+    text_y = Window.GetHeight() * 3 / 4;
+
+fun centered(sprite, image, y) {
+    sprite.SetImage(image);
+    sprite.SetX(Window.GetWidth() / 2 - image.GetWidth() / 2);
+    sprite.SetY(y);
+    sprite.SetZ(10);
+}
+
+# --- spinner: five dots, the bright one moves -------------------------------
 spinner.frame = 0;
+spinner.sprite = Sprite();
+spinner.visible = 1;
+
 fun refresh_callback() {
     spinner.frame++;
+    if (spinner.visible) {
+        lit = Math.Int(spinner.frame / 8) % 5;
+        dots = "";
+        for (i = 0; i < 5; i++) {
+            if (i == lit) dots += "●  ";
+            else dots += "○  ";
+        }
+        centered(spinner.sprite, Image.Text(dots, 0.88, 0.90, 0.94), text_y);
+        spinner.sprite.SetOpacity(1);
+    } else {
+        spinner.sprite.SetOpacity(0);
+    }
 }
 Plymouth.SetRefreshFunction(refresh_callback);
+
+# --- prompts ------------------------------------------------------------------
+prompt.sprite = Sprite();
+entry.sprite = Sprite();
+
+fun show_prompt(text, value) {
+    spinner.visible = 0;
+    centered(prompt.sprite, Image.Text(text, 0.88, 0.90, 0.94), text_y);
+    prompt.sprite.SetOpacity(1);
+    centered(entry.sprite, Image.Text(value + " ", 0.48, 0.64, 1.0), text_y + 32);
+    entry.sprite.SetOpacity(1);
+}
+
+fun hide_prompt() {
+    prompt.sprite.SetOpacity(0);
+    entry.sprite.SetOpacity(0);
+    spinner.visible = 1;
+}
+
+# Passphrase: one bullet per typed character, never the characters themselves.
+fun password_callback(prompt_text, bullets) {
+    stars = "";
+    for (i = 0; i < bullets; i++) stars += "•";
+    if (prompt_text == "") prompt_text = "Passphrase";
+    show_prompt(prompt_text, stars);
+}
+Plymouth.SetDisplayPasswordFunction(password_callback);
+
+fun question_callback(prompt_text, answer) {
+    show_prompt(prompt_text, answer);
+}
+Plymouth.SetDisplayQuestionFunction(question_callback);
+
+Plymouth.SetDisplayNormalFunction(hide_prompt);
+
+# --- messages (e.g. "Checking disk", fsck progress) ----------------------------
+message.sprite = Sprite();
+fun message_callback(text) {
+    centered(message.sprite, Image.Text(text, 0.58, 0.63, 0.72), Window.GetHeight() - 60);
+}
+Plymouth.SetMessageFunction(message_callback);

@@ -7,22 +7,36 @@ set -eu
 log() { echo "[LuxenOS SwayFX] $*" >&2; }
 export DEBIAN_FRONTEND=noninteractive
 
+# Build-only packages; purged again at the end so compilers and headers do not
+# ship in the image. hwdata is not in this list: wlroots reads its PNP ids at
+# runtime.
+BUILD_DEPS="build-essential git meson ninja-build pkg-config cmake scdoc
+    wayland-protocols libwayland-dev libpcre2-dev libjson-c-dev
+    libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev
+    libdrm-dev libgbm-dev libinput-dev libseat-dev libxkbcommon-dev
+    libxcb-dri3-dev libxcb-present-dev libxcb-res0-dev
+    libxcb-render-util0-dev libxcb-ewmh-dev libxcb-icccm4-dev
+    libliftoff-dev libdisplay-info-dev liblcms2-dev libpixman-1-dev
+    libgles2-mesa-dev libudev-dev libxcb-composite0-dev
+    libxcb-xfixes0-dev libxcb-shape0-dev libxcb-xinput-dev
+    libxcb-render0-dev libxcb-shm0-dev libxcb1-dev libx11-xcb-dev"
+
 log "Installing SwayFX build dependencies"
 apt-get update
-apt-get install -y --no-install-recommends \
-    build-essential git meson ninja-build pkg-config cmake scdoc \
-    wayland-protocols libwayland-dev libpcre2-dev libjson-c-dev \
-    libpango1.0-dev libcairo2-dev libgdk-pixbuf-2.0-dev \
-    libdrm-dev libgbm-dev libinput-dev libseat-dev libxkbcommon-dev \
-    libxcb-dri3-dev libxcb-present-dev libxcb-res0-dev \
-    libxcb-render-util0-dev libxcb-ewmh-dev libxcb-icccm4-dev \
-    libliftoff-dev libdisplay-info-dev liblcms2-dev libpixman-1-dev \
-    libgles2-mesa-dev hwdata libudev-dev libxcb-composite0-dev \
-    libxcb-xfixes0-dev libxcb-shape0-dev libxcb-xinput-dev \
-    libxcb-render0-dev libxcb-shm0-dev libxcb1-dev libx11-xcb-dev
+# Only what this hook adds may be purged later: remember what was already
+# installed (e.g. git or pkg-config from a package list).
+preinstalled=""
+for p in $BUILD_DEPS; do
+    if [ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null)" = installed ]; then
+        preinstalled="$preinstalled $p"
+    fi
+done
+# shellcheck disable=SC2086  # word-split package list
+apt-get install -y --no-install-recommends hwdata $BUILD_DEPS
 
+STAGE=/tmp/luxenos-swayfx-stage
 build_root="$(mktemp -d /tmp/luxenos-swayfx.XXXXXX)"
-cleanup() { rm -rf "$build_root"; }
+cleanup() { rm -rf "$build_root" "$STAGE"; }
 trap cleanup EXIT HUP INT TERM
 cd "$build_root"
 
@@ -36,12 +50,46 @@ git clone --depth 1 --branch 0.19.0 https://gitlab.freedesktop.org/wlroots/wlroo
 log "Configuring and compiling SwayFX (pinned SceneFX/wlroots subprojects)"
 meson setup build --prefix=/usr/local --buildtype=release
 ninja -C build
-DESTDIR=/tmp/luxenos-swayfx-stage ninja -C build install
+DESTDIR="$STAGE" ninja -C build install
 
 log "Installing SwayFX into /usr/local and refreshing library cache"
-cp -a /tmp/luxenos-swayfx-stage/usr/local/. /usr/local/
+cp -a "$STAGE/usr/local/." /usr/local/
 ldconfig
 
+# The binaries in /usr/local are invisible to apt: keep every Debian library
+# they link against by marking its package manual, so purging the build
+# dependencies (and autoremove) cannot take a runtime library with them.
+log "Pinning SwayFX runtime libraries"
+runtime_pkgs=""
+for f in /usr/local/bin/sway* /usr/local/lib/*.so* /usr/local/lib/*/*.so*; do
+    [ -f "$f" ] || continue
+    for lib in $(ldd "$f" 2>/dev/null | awk '$2 == "=>" && $3 ~ /^\// { print $3 }'); do
+        real=$(readlink -f "$lib")
+        case $real in /usr/local/*) continue ;; esac
+        pkg=$(dpkg -S "$real" 2>/dev/null || dpkg -S "/usr$real" 2>/dev/null || true)
+        pkg=${pkg%%:*}
+        [ -n "$pkg" ] && runtime_pkgs="$runtime_pkgs $pkg"
+    done
+done
+runtime_pkgs=$(printf '%s\n' $runtime_pkgs | sort -u | tr '\n' ' ')
+# shellcheck disable=SC2086
+[ -n "$runtime_pkgs" ] && apt-mark manual $runtime_pkgs >/dev/null
+
+purge=""
+for p in $BUILD_DEPS; do
+    case " $preinstalled " in *" $p "*) ;; *) purge="$purge $p" ;; esac
+done
+log "Removing SwayFX build-only packages"
+# shellcheck disable=SC2086
+DEBIAN_FRONTEND=noninteractive apt-get purge -y $purge
+DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y
+
+missing=$(ldd /usr/local/bin/sway 2>&1 | grep 'not found' || true)
+if [ -n "$missing" ]; then
+    log "ERROR: SwayFX lost runtime libraries after removing build packages:"
+    printf '%s\n' "$missing" >&2
+    exit 1
+fi
 if ! /usr/local/bin/sway --version 2>&1 | grep -qi swayfx; then
     log "ERROR: installed compositor does not identify itself as SwayFX"
     /usr/local/bin/sway --version || true

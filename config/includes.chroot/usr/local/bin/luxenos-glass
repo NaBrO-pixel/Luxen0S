@@ -251,6 +251,9 @@ min_opacity() {
 resolve_config() {
     load_conf "$SYS_CONF"
     load_conf "$USER_CONF"
+    # Was GLASS_ENABLE set in either file? An explicit value beats what
+    # GLASS_INTENSITY=0 implies.
+    ENABLE_EXPLICIT=${GLASS_ENABLE:+yes}
 
     : "${GLASS_ENABLE:=yes}" "${GLASS_THEME:=dark}" "${GLASS_PRESET:=balanced}"
     : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}"
@@ -281,7 +284,7 @@ resolve_config() {
         P_ANIM_MS=$I_ANIM_MS P_GAPS=$I_GAPS P_DIM=$I_DIM
         P_SHEEN=$I_SHEEN P_HIGHLIGHT=$I_HIGHLIGHT
         P_FALLBACK_OPACITY=$I_FALLBACK_OPACITY P_BORDER_WIDTH=$I_BORDER_WIDTH
-        if [ "$GLASS_INTENSITY" -eq 0 ] && { [ ! -r "$USER_CONF" ] || ! grep -q "^GLASS_ENABLE=" "$USER_CONF"; }; then
+        if [ "$GLASS_INTENSITY" -eq 0 ] && [ -z "$ENABLE_EXPLICIT" ]; then
             GLASS_ENABLE=no
         fi
     fi
@@ -467,12 +470,15 @@ sheen_css() {
         printf 'background-image: none;'
     fi
 }
+# The inset top highlight belongs to the sheen; the drop shadow to
+# GLASS_SHADOW. Either can be off without taking the other with it.
 shadow_css() {
-    if [ "$SHEEN" -eq 1 ]; then
-        printf 'box-shadow: inset 0 1px 0 @glass_hi, 0 2px 8px rgba(0,0,0,%s);' "$(alpha "$SHADOW_A")"
-    else
-        printf 'box-shadow: none;'
+    _s=""
+    if [ "$SHEEN" -eq 1 ]; then _s="inset 0 1px 0 @glass_hi"; fi
+    if [ "$SHADOW_A" -gt 0 ]; then
+        _s="${_s:+$_s, }0 2px 8px rgba(0,0,0,$(alpha "$SHADOW_A"))"
     fi
+    printf 'box-shadow: %s;' "${_s:-none}"
 }
 
 write_waybar() {
@@ -481,7 +487,7 @@ write_waybar() {
 $(palette_css)
 
 * {
-    font-family: "$GLASS_FONT", "Noto Sans", "Font Awesome 6 Free", sans-serif;
+    font-family: "$GLASS_FONT", "Noto Sans", "FontAwesome", "Font Awesome 6 Free", sans-serif;
     font-size: ${GLASS_FONT_SIZE}px;
     min-height: 0;
     $(transition_css)

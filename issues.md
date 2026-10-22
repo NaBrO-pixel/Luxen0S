@@ -53,6 +53,40 @@ latest review pass.
     `waydroid session start`; Print took two separate screenshots; the
     validator parsed bash scripts with `sh -n`.
 
+15. **Live boot showed a login screen instead of the installer** - Debian's
+    greetd package enables greetd.service on install, and its unit
+    `Conflicts=getty@tty1.service`, so it replaced the tty1 autologin that
+    starts the Calamares kiosk. Hook 0150 now disables it in the image;
+    `enable-greetd.sh` enables it on the installed system.
+16. **Invisible LUKS passphrase prompt** - the Plymouth script theme never
+    drew password/question prompts (nor its "spinner"). Encrypted installs
+    would have waited at a blank screen. Rewritten with prompt, message and
+    spinner callbacks.
+17. **Waybar icons were empty strings** (battery, volume, Wi-Fi, Ethernet) and
+    the CSS asked for "Font Awesome 6", but trixie ships Font Awesome 4.7.
+    Restored as `\u` escapes with 4.7 code points; "FontAwesome" added.
+18. **CI** - `validate.yml` triggered on `Dev`, so pushes to `dev` were never
+    validated; `draft-release.yml` failed for every image under 2 GiB (it
+    split it and then required `REASSEMBLE.md`); `build-iso.yml` ran the
+    artifact validation step twice; the release token now falls back to the
+    job token when `RELEASE_PAT` is not set.
+19. **SwayFX build tools shipped in the image** - compilers, git and ~30 -dev
+    packages stayed installed. Hook 0200 pins the runtime libraries the
+    binaries link against, purges the build-only packages, and fails the build
+    if SwayFX then misses a library.
+20. **Updater rollback** - restored the wrong backup (list numbered oldest
+    first, selection newest first) and restored `/etc/passwd`, `shadow`,
+    `group` and the machine-id. Both fixed; the root filesystem check now reads
+    the ext4 error state with `tune2fs` instead of `e2fsck -n` on a mounted
+    filesystem; SC2155 warnings fixed.
+21. Smaller: Calamares slideshow never advanced (`presentation.timer` does
+    not exist) and its support/release links pointed at `example.invalid`;
+    GRUB theme referenced missing `select_*.png`; `GLASS_SHEEN=no` also
+    removed drop shadows; an explicit `GLASS_ENABLE` now beats
+    `GLASS_INTENSITY=0`; `luxenos-lock` mis-shifted arguments on blank style
+    lines; `luxenos-greeter` leaked its fallback temp directory; a misleading
+    `username=` comment in hook 0150.
+
 ## Already resolved earlier (original findings)
 
 - greetd enablement: done with `systemctl --root=/ enable` plus verification
@@ -66,5 +100,3 @@ latest review pass.
 
 - Installer-to-installed-system handoff (live -> Calamares -> greetd) has never
   been exercised in a real install; add a QEMU smoke test in CI.
-- `luxenos-updater` / `luxenos-update-settings` have shellcheck SC2155 style
-  warnings (declare-and-assign on one line masks exit codes).

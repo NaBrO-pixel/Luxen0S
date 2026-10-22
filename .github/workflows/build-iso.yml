@@ -150,23 +150,6 @@ jobs:
             exit 1
           fi
 
-      - name: Validate generated ISO artifacts before upload
-        env:
-          VARIANT: ${{ inputs.variant }}
-        run: |
-          set -eu
-          name="luxenos-$VARIANT-amd64.iso"
-          if [ -f "$name" ]; then
-            [ -s "$name" ]
-            file "$name" | grep -qi 'ISO 9660'
-            sha256sum -c "$name.sha256"
-          elif ls "luxenos-$VARIANT-amd64.iso.part"* >/dev/null 2>&1; then
-            sha256sum -c SHA256SUMS.parts
-          else
-            echo "no valid ISO artifact found for $VARIANT"
-            exit 1
-          fi
-
       - uses: actions/upload-artifact@v4
         with:
           name: luxenos-${{ inputs.variant }}-iso

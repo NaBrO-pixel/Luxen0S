@@ -17,7 +17,6 @@ desktop-color: "#1d2330"
     height = 50%
     item_color: "#8892a6"
     selected_item_color: "#ffffff"
-    selected_item_pixmap_style: "select_*.png"
     item_height: 32
     item_padding: 6
     item_spacing: 4

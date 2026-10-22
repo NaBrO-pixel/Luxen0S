@@ -55,12 +55,26 @@ ExecStart=-/sbin/agetty --autologin ${LIVE_USERNAME} --noclear %I \$TERM
 UNIT
 
 # Build-time live user name for luxenos-live-access (a username= boot
-# parameter overrides it).
+# parameter must match it, or the installer gets no root access).
 printf '%s\n' "$LIVE_USERNAME" > /etc/luxenos-installer/live-username
 
 log "Enabling luxenos-live-access.service (installer root access, live boot only)"
 mkdir -p /etc/systemd/system/multi-user.target.wants
 ln -sf /etc/systemd/system/luxenos-live-access.service \
     /etc/systemd/system/multi-user.target.wants/luxenos-live-access.service
+
+# Debian's greetd package enables greetd.service (Alias=display-manager.service)
+# when it is installed. Its unit Conflicts=getty@tty1.service, so on a live boot
+# it would stop the autologin above and show a login screen instead of the
+# installer. Keep it off in the image; enable-greetd.sh turns it on for the
+# installed system (Calamares cleanup job and the d-i preseed late_command).
+log "Disabling greetd in the live image (enabled again on the installed system)"
+systemctl disable greetd.service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/display-manager.service
+if [ -e /etc/systemd/system/display-manager.service ] \
+    || systemctl is-enabled --quiet greetd.service 2>/dev/null; then
+    log "ERROR: greetd.service is still enabled; the live session would not reach the installer"
+    exit 1
+fi
 
 log "Live boot will go straight to the Calamares installer kiosk"
