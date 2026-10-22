@@ -183,13 +183,36 @@ fi
 
 # 3. Nothing worked: say so where the user can see it.
 log "could not get administrator rights for the installer: $errors"
-msg="The LuxenOS installer could not obtain administrator (root) rights, so it cannot partition the disk.\n\nWhat to try next:\n  • Retry the installer (this will attempt to get administrator rights again).\n  • Open a terminal (press Super+Return) and run exactly:\n      sudo /usr/local/bin/luxenos-installer\n  • View the installer log file in the live session: ~/.cache/luxenos-installer.log\n  • To collect diagnostic output for support: run\n      journalctl -t luxenos-installer  | tail -n 200\n\nIf the problem persists, reboot the USB and try again."
+msg=$(cat <<'MSG'
+The LuxenOS installer could not obtain administrator (root) rights, so it cannot partition the disk.
+
+What to try next:
+  • Retry the installer (this will attempt to get administrator rights again).
+  • Open a terminal (press Super+Return) and run exactly:
+      sudo /usr/local/bin/luxenos-installer
+  • View the installer log file in the live session: ~/.cache/luxenos-installer.log
+  • To collect diagnostic output for support: run
+      journalctl -t luxenos-installer  | tail -n 200
+
+If the problem persists, reboot the USB and try again.
+MSG
+)
 
 if [ -n "${SWAYSOCK:-}" ] && command -v swaynag >/dev/null 2>&1; then
-    swaynag -t error -m "$msg" -B "Retry" "$SELF" -B "Open terminal" "foot" >/dev/null 2>&1 && exit 1
+    # swaynag shows one line; the buttons do the work.
+    swaynag -t error -m "The LuxenOS installer could not get administrator rights (details: ~/.cache/luxenos-installer.log)." \
+        -B "Retry" "$SELF" -B "Open terminal" "foot" >/dev/null 2>&1 && exit 1
 fi
-if command -v zenity >/dev/null 2>&1 && zenity --error --no-markup --width=520 --ok-label="Retry" --extra-button="Open terminal" --text="$msg" >/dev/null 2>&1; then
-    exit 1
+if command -v zenity >/dev/null 2>&1; then
+    # OK ("Retry") exits 0; "Open terminal" prints its label and exits 1.
+    picked=$(zenity --error --no-markup --width=520 --ok-label="Retry" --extra-button="Open terminal" --text="$msg" 2>/dev/null)
+    zrc=$?
+    if [ "$zrc" -eq 0 ]; then
+        exec "$SELF"
+    elif [ "$picked" = "Open terminal" ] && command -v foot >/dev/null 2>&1; then
+        (setsid foot >/dev/null 2>&1 &)
+    fi
+    [ "$zrc" -le 1 ] && exit 1
 fi
 if command -v foot >/dev/null 2>&1; then
     # shellcheck disable=SC2016 # $1 is expanded by the inner sh

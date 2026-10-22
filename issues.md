@@ -25,6 +25,33 @@ latest review pass.
    greetd wiring. All covered now.
 6. Stale comments in `calamares/settings.conf` (claimed no display manager) and
    `profile.d/luxenos-session.sh` (dangling comment fragment).
+7. **Auto-update ran at every boot** - the timer had
+   `Requires=luxenos-auto-update.service`, which starts the service whenever
+   the timer starts. Removed (the validator rejects it).
+8. **`luxenos-updater` ignored `updater.conf`** - firmware/Waydroid/Flatpak
+   toggles, backup settings and AC-only were never read. It now parses them;
+   apt failures are detected (pipelines returned `tee`'s status), upgrades use
+   `--with-new-pkgs` so new kernel packages are not held back, the
+   "security only" step (a no-op `apt-get install --only-upgrade`) now runs
+   `unattended-upgrade`, and `fwupdmgr` no longer waits for a prompt.
+9. **`luxenos-update-settings`** - `AUTO_UPDATE_TIME` never reached the timer
+   (now a drop-in), and pressing Enter at "Enable automatic updates?" in
+   `configure` disabled them.
+10. **Traditional installs never enabled greetd** - preseed's `late_command`
+    now runs `enable-greetd.sh` as Calamares does.
+11. **No wallpaper** - `swaybg` (only a Recommends of sway) was missing from the
+    package lists; `flatpak` and `fwupd`, used by hooks/updater/health check,
+    were missing too.
+12. **Android apps had no network** - ufw's deny-incoming / DROP-forward
+    blocked Waydroid's DHCP, DNS and NAT on `waydroid0`; hook 0200 allows them.
+13. **Power profile never applied** - `sudo -n tlp` has no sudoers rule. Now a
+    polkit action (`org.luxenos.power.profile`, active session, no password)
+    runs `luxenos-power-profile-root`, which accepts only `bat|ac|start`. The
+    Waybar module also listens for the refresh signal now.
+14. Smaller: installer error dialog's "Retry" just exited and showed literal
+    `\n`; `luxenos-setup-android` hung on the foreground
+    `waydroid session start`; Print took two separate screenshots; the
+    validator parsed bash scripts with `sh -n`.
 
 ## Already resolved earlier (original findings)
 

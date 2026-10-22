@@ -26,6 +26,16 @@ if command -v ufw >/dev/null 2>&1; then
     log "Configuring default firewall policy"
     ufw default deny incoming >/dev/null 2>&1 || true
     ufw default allow outgoing >/dev/null 2>&1 || true
+    # Waydroid: the Android container gets DHCP and DNS from the host on its
+    # waydroid0 bridge and is NATed out through it. With "deny incoming" and
+    # ufw's default DROP forward policy, Android apps would have no network.
+    log "Allowing Waydroid's container network (waydroid0)"
+    {
+        ufw allow in on waydroid0 to any port 67 proto udp &&
+        ufw allow in on waydroid0 to any port 53 &&
+        ufw route allow in on waydroid0 &&
+        ufw route allow out on waydroid0
+    } >/dev/null 2>&1 || log "WARNING: could not add the Waydroid firewall rules"
     if [ -f /etc/ufw/ufw.conf ]; then
         sed -i 's/^ENABLED=.*/ENABLED=yes/' /etc/ufw/ufw.conf
     fi

@@ -1,6 +1,8 @@
 [Unit]
 Description=LuxenOS Daily Automatic Updates Timer
-Requires=luxenos-auto-update.service
+# No Requires=luxenos-auto-update.service: that would start the update
+# whenever the timer starts (every boot), not only on schedule. A timer
+# triggers the service of the same name by itself.
 
 [Timer]
 # Run daily at 2 AM (system time)

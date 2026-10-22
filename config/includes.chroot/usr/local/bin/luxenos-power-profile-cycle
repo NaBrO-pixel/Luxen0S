@@ -1,7 +1,8 @@
 #!/bin/sh
 # Cycles balanced -> powersave -> performance -> balanced ... and asks TLP to
-# apply the corresponding mode. Falls back to just recording the preference
-# if tlp isn't installed/enabled, so this stays safe to run on any session.
+# apply the corresponding mode through luxenos-power-profile-root (pkexec,
+# no password for the active local session). Falls back to just recording the
+# preference if tlp isn't installed, so this stays safe to run on any session.
 
 set -eu
 
@@ -20,12 +21,18 @@ esac
 
 echo "$next" > "$STATE_FILE"
 
-if command -v tlp >/dev/null 2>&1; then
+HELPER=/usr/libexec/luxenos/luxenos-power-profile-root
+if command -v tlp >/dev/null 2>&1 && [ -x "$HELPER" ]; then
     case "$next" in
-        powersave)   sudo -n tlp bat >/dev/null 2>&1 || true ;;
-        performance) sudo -n tlp ac  >/dev/null 2>&1 || true ;;
-        balanced)    sudo -n tlp start >/dev/null 2>&1 || true ;;
+        powersave)   mode=bat ;;
+        performance) mode=ac ;;
+        *)           mode=start ;;
     esac
+    if ! pkexec "$HELPER" "$mode" >/dev/null 2>&1; then
+        command -v notify-send >/dev/null 2>&1 \
+            && notify-send -a LuxenOS "Power profile not applied" \
+                "TLP could not be switched to $next." >/dev/null 2>&1
+    fi
 fi
 
 command -v pkill >/dev/null 2>&1 && pkill -RTMIN+8 waybar >/dev/null 2>&1 || true
