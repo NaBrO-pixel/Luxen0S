@@ -253,15 +253,14 @@ resolve_config() {
     load_conf "$USER_CONF"
 
     : "${GLASS_ENABLE:=yes}" "${GLASS_THEME:=dark}" "${GLASS_PRESET:=balanced}"
-    : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}" "${GLASS_SHEEN:=yes}" "${GLASS_HIGHLIGHT_OPACITY:=9}"
+    : "${GLASS_EFFECTS:=auto}" "${GLASS_REDUCE_MOTION:=no}"
     : "${GLASS_ACCENT:=#7aa2ff}" "${GLASS_TINT_DARK:=#141a26}" "${GLASS_TINT_LIGHT:=#f4f7fc}" "${GLASS_FONT:=Inter}" "${GLASS_FONT_SIZE:=13}"
-    : "${GLASS_FALLBACK_OPACITY:=82}" "${GLASS_MIN_CONTRAST:=3.0}"
+    : "${GLASS_MIN_CONTRAST:=3.0}"
 
     enum GLASS_ENABLE yes yes no
     enum GLASS_THEME dark dark light
     enum GLASS_EFFECTS auto auto off
     enum GLASS_REDUCE_MOTION no yes no
-    enum GLASS_SHEEN yes yes no
     enum GLASS_PRESET balanced performance balanced rich
     hexcolor GLASS_ACCENT '#7aa2ff'
     hexcolor GLASS_TINT_DARK '#141a26'
@@ -269,6 +268,7 @@ resolve_config() {
     if [ -z "$GLASS_FONT" ]; then GLASS_FONT=Inter; fi
 
     preset_values "$GLASS_PRESET"
+    P_SHEEN=yes P_HIGHLIGHT=9 P_FALLBACK_OPACITY=82 P_BORDER_WIDTH=1
     # Optional system GLASS_INTENSITY scales preset defaults. Explicit
     # GLASS_* values remain authoritative over the calculated values.
     if [ -n "${GLASS_INTENSITY:-}" ]; then
@@ -279,6 +279,8 @@ resolve_config() {
         P_BLUR_PASSES=$I_BLUR_PASSES P_SATURATION=$I_SATURATION P_BLUR_NOISE=$I_BLUR_NOISE
         P_BLUR_BRIGHTNESS=$I_BLUR_BRIGHTNESS P_BLUR_CONTRAST=$I_BLUR_CONTRAST
         P_ANIM_MS=$I_ANIM_MS P_GAPS=$I_GAPS P_DIM=$I_DIM
+        P_SHEEN=$I_SHEEN P_HIGHLIGHT=$I_HIGHLIGHT
+        P_FALLBACK_OPACITY=$I_FALLBACK_OPACITY P_BORDER_WIDTH=$I_BORDER_WIDTH
         if [ "$GLASS_INTENSITY" -eq 0 ] && { [ ! -r "$USER_CONF" ] || ! grep -q "^GLASS_ENABLE=" "$USER_CONF"; }; then
             GLASS_ENABLE=no
         fi
@@ -290,9 +292,12 @@ resolve_config() {
     : "${GLASS_BLUR_PASSES:=$P_BLUR_PASSES}" "${GLASS_SATURATION:=$P_SATURATION}"
     : "${GLASS_BLUR_NOISE:=$P_BLUR_NOISE}" "${GLASS_BLUR_BRIGHTNESS:=$P_BLUR_BRIGHTNESS}"
     : "${GLASS_BLUR_CONTRAST:=$P_BLUR_CONTRAST}" "${GLASS_ANIM_MS:=$P_ANIM_MS}"
-    : "${GLASS_GAPS:=$P_GAPS}" "${GLASS_DIM_INACTIVE:=$P_DIM}" "${GLASS_BORDER_WIDTH:=1}"
+    : "${GLASS_GAPS:=$P_GAPS}" "${GLASS_DIM_INACTIVE:=$P_DIM}" "${GLASS_BORDER_WIDTH:=$P_BORDER_WIDTH}"
+    : "${GLASS_SHEEN:=$P_SHEEN}" "${GLASS_HIGHLIGHT_OPACITY:=$P_HIGHLIGHT}"
+    : "${GLASS_FALLBACK_OPACITY:=$P_FALLBACK_OPACITY}"
 
     enum GLASS_BLUR yes yes no
+    enum GLASS_SHEEN yes yes no
     num GLASS_OPACITY 0 100 68
     num GLASS_BORDER_OPACITY 0 100 26
     num GLASS_SHADOW 0 100 35
