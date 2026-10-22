@@ -291,3 +291,36 @@ def gicon_image(gicon, size, fallback="application-x-executable"):
 def run_app(app_class, argv=None):
     app = app_class()
     return app.run(argv if argv is not None else sys.argv)
+
+
+def run_streaming(argv, on_line, on_done):
+    """Run argv (no shell), call on_line(str) per output line and
+    on_done(exit_status) at the end, all on the GTK main loop."""
+    try:
+        proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
+    except GLib.Error as e:
+        on_line("@@LOG ERROR: %s" % e.message)
+        on_done(127)
+        return None
+    stream = Gio.DataInputStream.new(proc.get_stdout_pipe())
+
+    def finished(p, res):
+        try:
+            p.wait_finish(res)
+        except GLib.Error:
+            pass
+        on_done(p.get_exit_status() if p.get_if_exited() else 1)
+
+    def read_line(s, res):
+        try:
+            line, _n = s.read_line_finish_utf8(res)
+        except GLib.Error:
+            line = None
+        if line is None:
+            proc.wait_async(None, finished)
+            return
+        on_line(line)
+        s.read_line_async(GLib.PRIORITY_DEFAULT, None, read_line)
+
+    stream.read_line_async(GLib.PRIORITY_DEFAULT, None, read_line)
+    return proc

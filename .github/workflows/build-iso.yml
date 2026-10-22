@@ -55,6 +55,25 @@ jobs:
               lb build
             '
 
+      # The installed system must really contain the LuxenOS apps and their
+      # runtime (hook 0400 already fails the build if they do not import).
+      - name: Check the image contains the LuxenOS desktop apps
+        run: |
+          set -eu
+          for f in luxenos-launcher luxenos-dock luxenos-quick-settings luxenos-overview \
+                   luxenos-monitor luxenos-software luxenos-restore-center luxenos-welcome \
+                   luxenos-theme luxenos-settings luxenos-restore; do
+            sudo test -x "chroot/usr/local/bin/$f" || { echo "missing $f"; exit 1; }
+          done
+          sudo test -x chroot/usr/libexec/luxenos/luxenos-restore-root
+          sudo test -f chroot/usr/share/luxenos/ui/shell.css
+          sudo ls chroot/usr/share/luxenos/themes/ | grep -q '\.theme$'
+          for p in python3-gi gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0 python3-apt thunar-archive-plugin; do
+            sudo dpkg-query --admindir=chroot/var/lib/dpkg -W -f='${Status}\n' "$p" | grep -q 'install ok installed' \
+              || { echo "package $p is not installed in the image"; exit 1; }
+          done
+          echo "LuxenOS desktop apps present"
+
       # What is actually taking up the space, so shrinking the image is driven
       # by numbers instead of guesswork. Best-effort: a report must never fail
       # a build that otherwise produced an ISO.

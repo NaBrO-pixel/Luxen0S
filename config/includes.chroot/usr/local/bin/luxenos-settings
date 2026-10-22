@@ -1,0 +1,141 @@
+#!/bin/sh
+# LuxenOS Settings: one entry point for the desktop's settings pages.
+# Accessibility (Liquid Glass intensity, Reduce motion) stays in its own
+# page, luxenos-accessibility-settings, which remains the only place those
+# are set; Appearance here only picks theme packs, colours and light/dark,
+# which luxenos-glass applies on top of the same per-user glass.conf.
+#
+# Usage: luxenos-settings [appearance|accessibility|dock]
+set -u
+
+if ! command -v zenity >/dev/null 2>&1; then
+    printf '%s\n' "LuxenOS Settings requires zenity." >&2
+    exit 1
+fi
+TITLE="LuxenOS Settings"
+Z() { zenity "$@" 2>/dev/null; }
+err() { Z --error --title "$TITLE" --no-markup --width 460 --text "$1"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+start() { if have "$1"; then (setsid "$@" >/dev/null 2>&1 &); else err "$1 is not installed."; fi; }
+
+appearance() {
+    while :; do
+        current=$(luxenos-theme current 2>/dev/null)
+        theme=$(luxenos-glass get theme 2>/dev/null | tail -n 1)
+        # luxenos-theme list: "[*]id<TAB>name<TAB>description"
+        packs=$(luxenos-theme list 2>/dev/null | sed 's/^[ *]//')
+        choice=$(
+            {
+                printf '%s\n' "$packs" | while IFS="$(printf '\t')" read -r id name desc; do
+                    [ -n "$id" ] || continue
+                    mark=""; [ "$id" = "$current" ] && mark="(current) "
+                    printf 'pack:%s\n%s%s\n%s\n' "$id" "$mark" "$name" "$desc"
+                done
+                printf 'mode\nLight / dark\nNow: %s\n' "${theme:-dark}"
+                printf 'accent\nAccent colour…\nPick any colour\n'
+                printf 'revert\nUndo last appearance change\nGo back to the look before the last theme pack\n'
+                printf 'glass\nLiquid Glass intensity…\nSettings → Accessibility\n'
+            } | Z --list --title "$TITLE — Appearance" --width 640 --height 460 \
+                --text "Theme packs change colours, panels and wallpaper together. Your Liquid Glass intensity is kept unless you ask otherwise." \
+                --column id --column Appearance --column Details --hide-column 1 --print-column 1
+        ) || return 0
+        case $choice in
+            pack:*)
+                id=${choice#pack:}
+                glass=""
+                if Z --question --title "$TITLE" --width 460 --ok-label "Use pack's glass level" \
+                    --cancel-label "Keep my intensity" \
+                    --text "Also apply this pack's glass level? (Choose 'Keep my intensity' to change only colours and wallpaper.)"; then
+                    glass=--with-glass
+                fi
+                if ! out=$(luxenos-theme apply "$id" $glass 2>&1); then
+                    err "Could not apply the theme pack: $out"
+                    continue
+                fi
+                # Preview: keep only if confirmed within 20 seconds.
+                if ! Z --question --title "$TITLE" --width 420 --timeout 20 \
+                    --ok-label "Keep" --cancel-label "Revert" \
+                    --text "Keep this appearance? It reverts automatically in 20 seconds."; then
+                    luxenos-theme revert >/dev/null 2>&1 || err "Reverting failed; use 'Undo last appearance change'."
+                fi
+                ;;
+            mode)
+                if [ "$theme" = light ]; then luxenos-glass theme dark; else luxenos-glass theme light; fi \
+                    || err "Could not switch light/dark."
+                ;;
+            accent)
+                c=$(Z --color-selection --title "Accent colour" --show-palette) || continue
+                # zenity returns rgb(r,g,b); convert to #rrggbb.
+                hex=$(printf '%s' "$c" | sed -n 's/^rgba\{0,1\}(\([0-9]*\),\([0-9]*\),\([0-9]*\).*/\1 \2 \3/p' \
+                    | { read -r r g b && printf '#%02x%02x%02x' "$r" "$g" "$b"; })
+                case $hex in '#'[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) err "Unsupported colour: $c"; continue ;; esac
+                luxenos-glass set GLASS_ACCENT "$hex" || err "Could not set the accent colour."
+                ;;
+            revert) out=$(luxenos-theme revert 2>&1) || err "$out" ;;
+            glass) sh /usr/local/bin/luxenos-accessibility-settings ;;
+            *) return 0 ;;
+        esac
+    done
+}
+
+dock() {
+    while :; do
+        get() { luxenos-dock config | sed -n "s/^$1=//p"; }
+        pos=$(get DOCK_POSITION); size=$(get DOCK_ICON_SIZE); spc=$(get DOCK_SPACING)
+        hide=$(get DOCK_AUTOHIDE); en=$(get DOCK_ENABLE)
+        choice=$(Z --list --title "$TITLE — Dock" --width 520 --height 380 \
+            --column Setting --column Value \
+            "Show dock" "$en" "Position" "$pos" "Icon size" "${size}px" "Spacing" "${spc}px" "Auto-hide" "$hide") || return 0
+        case $choice in
+            "Show dock") [ "$en" = yes ] && v=no || v=yes; luxenos-dock config DOCK_ENABLE "$v" >/dev/null ;;
+            Position)
+                v=$(Z --list --radiolist --title "Dock position" --column "" --column Position \
+                    TRUE bottom FALSE left FALSE right --height 260) || continue
+                luxenos-dock config DOCK_POSITION "$v" >/dev/null ;;
+            "Icon size")
+                v=$(Z --scale --title "Icon size" --min-value 24 --max-value 96 --step 4 --value "$size") || continue
+                luxenos-dock config DOCK_ICON_SIZE "$v" >/dev/null ;;
+            Spacing)
+                v=$(Z --scale --title "Spacing" --min-value 0 --max-value 24 --value "$spc") || continue
+                luxenos-dock config DOCK_SPACING "$v" >/dev/null ;;
+            Auto-hide) [ "$hide" = yes ] && v=no || v=yes; luxenos-dock config DOCK_AUTOHIDE "$v" >/dev/null ;;
+            *) return 0 ;;
+        esac
+        # The dock is started once per login; start it if it was off.
+        [ "$(get DOCK_ENABLE)" = yes ] && start luxenos-dock
+    done
+}
+
+case ${1:-} in
+    appearance) appearance; exit 0 ;;
+    accessibility) exec sh /usr/local/bin/luxenos-accessibility-settings ;;
+    dock) dock; exit 0 ;;
+esac
+
+while :; do
+    choice=$(Z --list --title "$TITLE" --width 560 --height 520 \
+        --text "Choose a settings page." --column Page --column Description \
+        "Appearance" "Theme packs, light/dark, accent colour" \
+        "Accessibility" "Liquid Glass intensity, reduce motion" \
+        "Dock" "Position, icon size, auto-hide" \
+        "Network" "Wi-Fi, Ethernet, VPN" \
+        "Sound" "Output and input devices, volume" \
+        "Software and updates" "Install, update and remove software" \
+        "Automatic updates" "When and what is updated automatically" \
+        "Restore points" "Configuration backups and restore" \
+        "Welcome guide" "Keyboard, time zone and the first-steps tour" \
+        "System monitor" "Processes, memory, disks, battery") || exit 0
+    case $choice in
+        Appearance) appearance ;;
+        Accessibility) sh /usr/local/bin/luxenos-accessibility-settings ;;
+        Dock) dock ;;
+        Network) start luxenos-network ;;
+        Sound) start pavucontrol-qt ;;
+        "Software and updates") start luxenos-software ;;
+        "Automatic updates") start foot -e sudo luxenos-update-settings configure ;;
+        "Restore points") start luxenos-restore-center ;;
+        "Welcome guide") start luxenos-welcome ;;
+        "System monitor") start luxenos-monitor ;;
+        *) exit 0 ;;
+    esac
+done

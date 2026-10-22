@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LuxenOS defaults for Files (Thunar). Changed through Thunar's own
+     Edit > Preferences; this is only the starting point for new users. -->
+<channel name="thunar" version="1.0">
+  <!-- Breadcrumb path bar instead of a text entry (Ctrl+L still types a path). -->
+  <property name="last-location-bar" type="string" value="ThunarLocationButtons"/>
+  <property name="last-view" type="string" value="ThunarIconView"/>
+  <property name="last-show-hidden" type="bool" value="false"/>
+  <!-- Tabs (Ctrl+T) and split view (F3) are built in; open new windows as tabs. -->
+  <property name="misc-open-new-window-as-tab" type="bool" value="true"/>
+  <property name="misc-middle-click-in-tab" type="bool" value="true"/>
+  <property name="misc-confirm-close-multiple-tabs" type="bool" value="true"/>
+  <!-- Thumbnails for local files only (no network traffic for remote shares). -->
+  <property name="misc-thumbnail-mode" type="string" value="THUNAR_THUMBNAIL_MODE_ONLY_LOCAL"/>
+  <!-- Never run shell scripts on double click: Thunar asks first. -->
+  <property name="misc-exec-shell-scripts-by-default" type="bool" value="false"/>
+  <!-- Deleting asks for confirmation; "Delete" goes to the Trash. -->
+  <property name="misc-confirm-move-to-trash" type="bool" value="true"/>
+  <property name="misc-show-delete-action" type="bool" value="false"/>
+  <!-- Mount removable drives when they are plugged in (thunar-volman). -->
+  <property name="misc-volume-management" type="bool" value="true"/>
+  <property name="misc-full-path-in-tab-title" type="bool" value="false"/>
+</channel>

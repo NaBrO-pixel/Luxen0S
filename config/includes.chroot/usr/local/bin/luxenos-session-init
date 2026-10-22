@@ -11,6 +11,11 @@
 #   5. nm-applet (Wi-Fi/Ethernet tray icon and password prompts), once, and only
 #      if NetworkManager is actually running
 #   6. ~/Pictures for screenshots
+#   7. LuxenOS shell: the launcher (resident and hidden, so Super+Space is
+#      instant) and the dock; both are single-instance, so a second start is
+#      a no-op. Night light is restored if it was on at logout.
+#   8. Per-user Sway fragments (~/.config/luxenos/sway.d) for configs made
+#      before they were included by the default config.
 
 uid=$(id -u)
 
@@ -68,5 +73,26 @@ fi
 
 # 6. Screenshot folder.
 mkdir -p "$HOME/Pictures" 2>/dev/null
+
+# 7. Shell components.
+if have luxenos-launcher; then (setsid luxenos-launcher --background >/dev/null 2>&1 &); fi
+if have luxenos-dock; then (setsid luxenos-dock >/dev/null 2>&1 &); fi
+qs="${XDG_CONFIG_HOME:-$HOME/.config}/luxenos/quick-settings.conf"
+if have wlsunset && grep -qx 'NIGHT_LIGHT=yes' "$qs" 2>/dev/null; then
+    start_once wlsunset -t 4000 -T 4001
+fi
+
+# 8. Older Sway configs do not include the managed fragments: apply them
+#    over IPC. They only contain `input` and `output` commands.
+frag="${XDG_CONFIG_HOME:-$HOME/.config}/luxenos/sway.d"
+cfg="${XDG_CONFIG_HOME:-$HOME/.config}/sway/config"
+if [ -d "$frag" ] && have swaymsg && ! grep -q 'luxenos/sway.d' "$cfg" 2>/dev/null; then
+    for f in "$frag"/*.conf; do
+        [ -f "$f" ] || continue
+        grep -E '^(input|output) ' "$f" | while IFS= read -r line; do
+            swaymsg "$line" >/dev/null 2>&1 || log "could not apply '$line' from $f"
+        done
+    done
+fi
 
 exit 0

@@ -1,0 +1,45 @@
+#!/bin/sh
+# End-to-end test of luxenos-restore-root against a scratch /etc and backup
+# directory. Needs root (it runs dpkg/tar as the real helper does), so CI runs
+# it inside a debian:trixie container. Never touches the real /etc.
+set -eu
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+H="$ROOT/config/includes.chroot/usr/libexec/luxenos/luxenos-restore-root"
+[ "$(id -u)" -eq 0 ] || { echo "skip: needs root"; exit 0; }
+W=$(mktemp -d)
+trap 'rm -rf "$W"' EXIT
+mkdir -p "$W/root/etc/app" "$W/backups"
+echo one > "$W/root/etc/app/setting"
+echo secret > "$W/root/etc/shadow"
+export LUXENOS_RESTORE_DIR="$W/backups" LUXENOS_RESTORE_ETC_ROOT="$W/root"
+fail() { echo "FAIL: $*"; exit 1; }
+
+out=$(bash "$H" create "Test point") || fail "create: $out"
+id=$(printf '%s\n' "$out" | sed -n 's/^@@CREATED //p')
+[ -n "$id" ] || fail "no id printed"
+d="$W/backups/$id"
+[ "$(stat -c %a "$d/etc-backup.tar.gz")" = 600 ] || fail "settings archive is not 0600"
+[ "$(stat -c %a "$d/info.conf")" = 644 ] || fail "info.conf not world-readable"
+grep -qx 'FORMAT=2' "$d/info.conf" || fail "no FORMAT=2"
+grep -qx 'DESCRIPTION=Test point' "$d/info.conf" || fail "description"
+bash "$H" verify "$id" | grep -q 'checksums OK' || fail "verify"
+
+echo two > "$W/root/etc/app/setting"
+echo changed > "$W/root/etc/shadow"
+bash "$H" preview "$id" | grep -q '^@@ITEM config changed /etc/app/setting' || fail "preview misses changed file"
+bash "$H" preview "$id" | grep -q 'etc/shadow' && fail "preview lists an excluded file"
+
+bash "$H" restore "$id" config >/dev/null || fail "restore"
+[ "$(cat "$W/root/etc/app/setting")" = one ] || fail "setting not restored"
+[ "$(cat "$W/root/etc/shadow")" = changed ] || fail "shadow must never be restored"
+n=$(find "$W/backups" -mindepth 1 -maxdepth 1 -name 'luxenos-backup-*' | wc -l)
+[ "$n" -eq 2 ] || fail "restore did not save an undo point first ($n points)"
+
+printf 'x\n' >> "$d/packages.list"
+bash "$H" verify "$id" >/dev/null 2>&1 && fail "tampered restore point passed verification"
+bash "$H" restore "$id" config >/dev/null 2>&1 && fail "tampered restore point was restored"
+bash "$H" verify '../../etc' >/dev/null 2>&1 && fail "path traversal id accepted"
+bash "$H" create "$(printf 'bad\nDESCRIPTION=evil')" >/dev/null || fail "create with newline"
+grep -c '^DESCRIPTION=' "$W"/backups/*/info.conf | grep -v ':1$' && fail "description injected a line"
+bash "$H" bogus >/dev/null 2>&1 && fail "unknown action accepted"
+echo "restore-root: all checks passed"

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LuxenOS custom actions for Files (Thunar). Edit with Edit > Configure custom actions. -->
+<actions>
+<action>
+	<icon>utilities-terminal</icon>
+	<name>Open Terminal Here</name>
+	<submenu></submenu>
+	<unique-id>luxenos-terminal-here</unique-id>
+	<command>foot --working-directory %f</command>
+	<description>Open a terminal in this folder</description>
+	<range></range>
+	<patterns>*</patterns>
+	<startup-notify/>
+	<directories/>
+</action>
+<action>
+	<icon>system-software-install</icon>
+	<name>Install with Software Center</name>
+	<submenu></submenu>
+	<unique-id>luxenos-install-deb</unique-id>
+	<command>luxenos-deb-install %f</command>
+	<description>Show what this Debian package contains and install it after confirmation</description>
+	<range>1</range>
+	<patterns>*.deb</patterns>
+	<other-files/>
+</action>
+</actions>

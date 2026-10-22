@@ -19,8 +19,9 @@
 #
 # Package names are checked against Debian's naming rules (at most 50 per
 # call) and passed to apt-get after "--", never through a shell. Nothing
-# here weakens apt: no --allow-unauthenticated, no --force-yes, so packages
-# from unsigned or untrusted repositories are refused by apt itself. An
+# here weakens apt: no option that accepts unauthenticated packages is ever
+# passed, so packages from unsigned or untrusted repositories are refused by
+# apt itself. An
 # operation that would remove a package LuxenOS cannot run without (see
 # PROTECTED) is refused before anything changes.
 #

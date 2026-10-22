@@ -160,7 +160,6 @@ def next_window(item):
     visible = item.visible_windows()
     if not visible:
         return None
-    ids = [w.get("id") for w, _ in visible]
     for i, (w, _) in enumerate(visible):
         if w.get("focused"):
             return visible[(i + 1) % len(visible)][0]

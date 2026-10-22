@@ -1,0 +1,12 @@
+[Desktop Entry]
+# LuxenOS: Thunar appears as "Files" (luxenos-files.desktop). This copy only
+# hides the duplicate menu entry; "Open with" and folder handling still work.
+Type=Application
+Name=Thunar File Manager
+Exec=thunar %U
+Icon=org.xfce.thunar
+Terminal=false
+StartupNotify=true
+NoDisplay=true
+Categories=System;Core;GTK;FileTools;FileManager;
+MimeType=inode/directory;

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Software Center
+GenericName=Software
+Comment=Find, install, update and remove software from Debian and your other repositories
+Exec=luxenos-software %f
+Icon=system-software-install
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.SoftwareCenter
+Categories=System;PackageManager;
+Keywords=install;apps;store;packages;apt;update;remove;deb;
+MimeType=application/vnd.debian.binary-package;application/x-deb;application/x-debian-package;

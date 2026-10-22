@@ -56,7 +56,12 @@ if [ -z "${sock:-}" ]; then
     echo "FAIL: headless sway did not start"; cat "$OUT/sway.log"; exit 1
 fi
 export SWAYSOCK=$sock
-export WAYLAND_DISPLAY=$(ls "$XDG_RUNTIME_DIR" | grep -m1 '^wayland-[0-9]*$')
+for w in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+    case $w in *.lock) continue ;; esac
+    WAYLAND_DISPLAY=${w##*/}
+    break
+done
+export WAYLAND_DISPLAY
 # Something to look at in the dock and the overview.
 swaymsg 'exec foot' >/dev/null 2>&1
 swaymsg 'workspace 2; exec foot; workspace 1' >/dev/null 2>&1

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome to LuxenOS
+Comment=First steps: keyboard, time zone, network, appearance and shortcuts
+Exec=luxenos-welcome
+Icon=help-about
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Welcome
+Categories=Settings;
+Keywords=welcome;tour;first steps;setup;help;shortcuts;

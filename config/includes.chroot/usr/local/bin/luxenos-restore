@@ -1,0 +1,10 @@
+#!/bin/sh
+# luxenos-restore - restore points from a text console (works when the
+# desktop does not start: log in on Ctrl+Alt+F2 and run `sudo luxenos-restore`).
+# Without arguments it opens an interactive menu; see
+# /usr/libexec/luxenos/luxenos-restore-root for the subcommands.
+HELPER=/usr/libexec/luxenos/luxenos-restore-root
+if [ "$(id -u)" -eq 0 ]; then
+    exec "$HELPER" "$@"
+fi
+exec sudo "$HELPER" "$@"

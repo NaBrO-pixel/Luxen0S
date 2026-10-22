@@ -1,0 +1,9 @@
+# LuxenOS theme pack.
+THEME_NAME=Minimal
+THEME_DESCRIPTION=Flat and calm: no glass, no blur, a plain dark background and a muted accent.
+GLASS_PRESET=flat
+GLASS_THEME=dark
+GLASS_ACCENT=#5e81ac
+GLASS_TINT_DARK=#1d2330
+GLASS_TINT_LIGHT=#f4f7fc
+WALLPAPER_COLOR=#1d2330

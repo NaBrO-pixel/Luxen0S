@@ -377,14 +377,27 @@ def main(argv=None):
             facts.append("Section: %s" % (info.section or "unknown"))
             if info.size:
                 facts.append("Installed size: %s" % ui.human_bytes(info.size))
-            if info.homepage:
-                facts.append("Homepage: %s" % info.homepage)
             self.d_facts.set_text("\n".join(facts))
             self.d_desc.set_text("Loading description…")
-            threading.Thread(target=lambda: GLib.idle_add(self.d_desc.set_text, pkg.describe(info.name) or
-                                                          info.summary), daemon=True).start()
+
+            def work():
+                try:
+                    desc, homepage = pkg.describe(info.name)
+                except (ImportError, SystemError):
+                    desc, homepage = "", ""
+                GLib.idle_add(self.show_description, info, desc, homepage, facts)
+
+            threading.Thread(target=work, daemon=True).start()
             self.update_detail_buttons()
             self.stack.set_visible_child_name("details")
+
+        def show_description(self, info, desc, homepage, facts):
+            if self.current is not info:
+                return False
+            self.d_desc.set_text(desc or info.summary)
+            if homepage:
+                self.d_facts.set_text("\n".join(facts + ["Homepage: %s" % homepage]))
+            return False
 
         def update_detail_buttons(self):
             info = self.current
@@ -627,19 +640,24 @@ def main(argv=None):
             if created:
                 win = Window(self)
             action = None
-            if "--updates" in args:
-                def action(w):
-                    w.stack.set_visible_child_name("updates")
-            elif "--install" in args:
-                names = [a for a in args[args.index("--install") + 1:] if pkg.valid_name(a)]
+            names = [a for a in args[args.index("--install") + 1:] if pkg.valid_name(a)] \
+                if "--install" in args else []
 
-                def action(w):
+            def show_updates(w):
+                w.stack.set_visible_child_name("updates")
+
+            def install_names(w):
                     found = [n for n in names if n in w.by_name and not w.by_name[n].installed]
                     if found:
                         w.start_operation("install", found)
                     elif names:
                         ui.alert(w, "Nothing to install", "These apps are already installed or not in the "
                                                           "catalogue (refresh it first): %s" % ", ".join(names))
+
+            if "--updates" in args:
+                action = show_updates
+            elif "--install" in args:
+                action = install_names
             if action is not None:
                 if created or not win.catalogue:
                     self.pending = action

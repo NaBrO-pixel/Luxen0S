@@ -116,3 +116,58 @@ jobs:
             traditional:live|installer:none|live:none) ;;
             *) echo "unexpected --debian-installer for $VARIANT"; exit 1 ;;
           esac
+
+  desktop-apps:
+    # The LuxenOS desktop apps against the real trixie stack: unit tests,
+    # lint, the restore-point helper end to end (as root, scratch /etc), and
+    # every app started inside a headless Sway (no GPU) with screenshots.
+    runs-on: ubuntu-latest
+    needs: validate-tree
+    container: debian:trixie
+    steps:
+      - name: Install GTK 4, gtk4-layer-shell, Sway and test tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates python3 python3-gi python3-gi-cairo gir1.2-gtk-4.0 \
+            gir1.2-gtk4layershell-1.0 libgtk4-layer-shell0 python3-apt python3-pyflakes \
+            sway swaybg grim foot dbus dbus-user-session procps zenity xkb-data \
+            fonts-dejavu fonts-inter adwaita-icon-theme librsvg2-common \
+            shellcheck desktop-file-utils
+
+      - uses: actions/checkout@v4
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests/python -v
+
+      - name: Lint Python and shell
+        run: |
+          set -eu
+          python3 -m pyflakes config/includes.chroot/usr/lib/luxenos/python/luxenos tests/python
+          shellcheck -S warning \
+            config/includes.chroot/usr/libexec/luxenos/luxenos-restore-root \
+            config/includes.chroot/usr/libexec/luxenos/luxenos-pkg-root \
+            config/includes.chroot/usr/local/bin/luxenos-settings \
+            config/includes.chroot/usr/local/bin/luxenos-session-init \
+            config/includes.chroot/usr/local/bin/luxenos-restore \
+            config/hooks/live/0400-luxenos-desktop-apps.hook.chroot \
+            tests/shell/test-restore-root tools/gui-smoke-test
+          for f in config/includes.chroot/usr/share/applications/*.desktop; do
+            desktop-file-validate "$f"
+          done
+
+      - name: Restore points end to end
+        run: tests/shell/test-restore-root
+
+      - name: Start every app in a headless Sway
+        env:
+          SMOKE_OUT: gui-smoke
+        run: tools/gui-smoke-test
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gui-smoke-screenshots
+          path: gui-smoke/
+          retention-days: 7
+          if-no-files-found: ignore

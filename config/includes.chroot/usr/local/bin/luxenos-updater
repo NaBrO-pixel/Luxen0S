@@ -161,50 +161,15 @@ check_prerequisites() {
 # ============================================================================
 
 create_backup() {
-    log_section "Creating System Backup"
-    
-    local backup_name
-    backup_name="luxenos-backup-$(date +%Y%m%d-%H%M%S)"
-    local backup_path="$LUXENOS_BACKUP_DIR/$backup_name"
-    
-    mkdir -p "$backup_path"
-    
-    # Backup package list
-    log_info "Backing up package list..."
-    dpkg --get-selections > "$backup_path/packages.list"
-    apt-mark showmanual > "$backup_path/manual-packages.list"
-    
-    # Backup /etc directory (critical configs)
-    log_info "Backing up system configuration..."
-    tar -czf "$backup_path/etc-backup.tar.gz" \
-        --exclude='/etc/luxenos-installer' \
-        --exclude='/etc/calamares' \
-        /etc 2>/dev/null || log_warn "Could not backup all /etc files"
-    
-    # Backup sway/desktop configs
-    log_info "Backing up user configurations..."
-    if [ -d /etc/skel/.config ]; then
-        tar -czf "$backup_path/skel-config-backup.tar.gz" /etc/skel/.config
+    log_section "Creating Restore Point"
+    # Restore points (configuration backup: /etc + package list; not a full
+    # system snapshot) are made by the same backend the Restore Center uses.
+    if run_logged /usr/libexec/luxenos/luxenos-restore-root create --trigger update "Before system update"; then
+        log_info "✓ Restore point created (see Restore Center or: sudo luxenos-restore)"
+    else
+        log_warn "Could not create a restore point"
+        return 1
     fi
-    
-    # Create metadata
-    cat > "$backup_path/backup-metadata.txt" << EOF
-Backup Date: $(date)
-LuxenOS Version: $(cat "$LUXENOS_VERSION_FILE" 2>/dev/null || echo "unknown")
-Kernel: $(uname -r)
-Hostname: $(hostname)
-Disk Space Used: $(du -sh / 2>/dev/null | cut -f1)
-EOF
-    
-    # Keep only the last BACKUP_RETENTION backups to save space
-    ls -t "${LUXENOS_BACKUP_DIR:?}" | tail -n +$((BACKUP_RETENTION + 1)) | while IFS= read -r old_backup; do
-        [ -n "$old_backup" ] || continue
-        log_warn "Removing old backup: $old_backup"
-        rm -rf "${LUXENOS_BACKUP_DIR:?}/$old_backup"
-    done
-    
-    log_info "✓ Backup created: $backup_path"
-    echo "$backup_path"
 }
 
 # ============================================================================
@@ -513,81 +478,14 @@ cleanup_system() {
 # ============================================================================
 
 list_available_backups() {
-    log_section "Available Backups"
-    
-    if [ ! -d "$LUXENOS_BACKUP_DIR" ] || [ -z "$(ls -A "$LUXENOS_BACKUP_DIR")" ]; then
-        log_error "No backups found"
-        return 1
-    fi
-    
-    # Newest first, numbered in the same order rollback_system selects by.
-    ls -t "$LUXENOS_BACKUP_DIR" | awk '{print NR ": " $0}' | \
-        tee -a "$LUXENOS_UPDATE_LOG"
+    log_section "Available Restore Points"
+    /usr/libexec/luxenos/luxenos-restore-root list
 }
 
 rollback_system() {
     log_section "System Rollback"
-    
-    if ! list_available_backups; then
-        return 1
-    fi
-    
-    log_warn "WARNING: Rollback will restore system state from backup"
-    log_warn "WARNING: Changes made after backup will be lost"
-    read -r -p "Continue with rollback? (yes/no) " response
-    if [ "$response" != "yes" ]; then
-        log_info "Rollback cancelled"
-        return 0
-    fi
-    
-    read -r -p "Select backup number to restore: " backup_num
-    case $backup_num in
-        ''|*[!0-9]*|0) log_error "Invalid backup selection"; return 1 ;;
-    esac
-    
-    # Get the Nth backup (POSIX compatible)
-    local backup_to_restore
-    backup_to_restore=$(ls -t "$LUXENOS_BACKUP_DIR" | sed -n "${backup_num}p")
-    
-    if [ -z "$backup_to_restore" ]; then
-        log_error "Invalid backup selection"
-        return 1
-    fi
-    
-    local backup_path="$LUXENOS_BACKUP_DIR/$backup_to_restore"
-    
-    log_warn "Restoring from: $backup_path"
-    log_info "Restoring package list..."
-    if [ -f "$backup_path/packages.list" ]; then
-        dpkg --set-selections < "$backup_path/packages.list"
-        apt-get dselect-upgrade -y 2>&1 | tee -a "$LUXENOS_UPDATE_LOG"
-    fi
-    
-    # Accounts, passwords and the machine identity are never rolled back:
-    # restoring them would undo password changes and break users created
-    # since the backup (their homes and files would lose their owner).
-    log_info "Restoring /etc configuration (accounts and passwords are kept)..."
-    if [ -f "$backup_path/etc-backup.tar.gz" ]; then
-        tar -xzf "$backup_path/etc-backup.tar.gz" -C / \
-            --exclude='etc/passwd' --exclude='etc/passwd-' \
-            --exclude='etc/shadow' --exclude='etc/shadow-' \
-            --exclude='etc/group' --exclude='etc/group-' \
-            --exclude='etc/gshadow' --exclude='etc/gshadow-' \
-            --exclude='etc/subuid' --exclude='etc/subuid-' \
-            --exclude='etc/subgid' --exclude='etc/subgid-' \
-            --exclude='etc/machine-id' \
-            2>/dev/null || \
-            log_warn "Could not restore all /etc files"
-    fi
-    
-    log_info "Restoring sway/desktop configs..."
-    if [ -f "$backup_path/skel-config-backup.tar.gz" ]; then
-        tar -xzf "$backup_path/skel-config-backup.tar.gz" -C / 2>/dev/null || \
-            log_warn "Could not restore all config files"
-    fi
-    
-    log_info "✓ Rollback complete"
-    log_warn "Please reboot for all changes to take effect"
+    # Interactive: preview, scope choice and a typed confirmation.
+    /usr/libexec/luxenos/luxenos-restore-root menu
 }
 
 # ============================================================================

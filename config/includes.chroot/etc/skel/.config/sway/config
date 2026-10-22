@@ -32,6 +32,12 @@ for_window [app_id="org.kde.polkit-kde-authentication-agent-1"] floating enable,
 for_window [app_id="polkit-gnome-authentication-agent-1"] floating enable, move position center
 for_window [class="Polkit-gnome-authentication-agent-1"] floating enable, move position center
 
+# LuxenOS apps. The launcher, dock, quick settings and overview are
+# layer-shell panels; these rules only matter if layer-shell is unavailable.
+for_window [app_id="org.luxenos.Launcher"] floating enable, sticky enable, move position center
+for_window [app_id="org.luxenos.QuickSettings"] floating enable, sticky enable
+for_window [app_id="org.luxenos.Welcome"] floating enable, resize set 820 600, move position center
+
 # Idle and lock behavior.
 exec swayidle -w \
     timeout 300 'luxenos-lock' \
@@ -48,6 +54,13 @@ bar {
 # Core bindings.
 bindsym $mod+Return exec $term
 bindsym $mod+d exec $menu
+# Spotlight-style search: apps, quick actions, recent documents, files.
+bindsym $mod+space exec luxenos-launcher
+# Workspace overview, Quick Settings, keyboard focus to the dock.
+bindsym $mod+Tab exec luxenos-overview
+bindsym $mod+n exec luxenos-quick-settings
+bindsym $mod+Shift+d exec luxenos-dock --focus
+bindsym Ctrl+Shift+Escape exec luxenos-monitor
 bindsym $mod+Shift+q kill
 bindsym $mod+Shift+c reload
 bindsym $mod+Shift+e exec swaymsg exit
@@ -112,8 +125,14 @@ bindsym XF86MonBrightnessDown exec brightnessctl set 5%-
 # NetworkManager is running). See /usr/local/bin/luxenos-session-init.
 exec luxenos-session-init
 
+# First-boot welcome guide: shows itself once per user, never on the live USB.
+exec luxenos-welcome --first-run
+
 # Waydroid may still need its first network-backed initialization, so ignore
 # session-start failures here and use the setup helper (Super+Shift+A).
 exec sh -c 'waydroid session start >/dev/null 2>&1 || true'
 
 include /etc/sway/config.d/*
+# Managed per-user fragments (keyboard layout from the welcome guide,
+# wallpaper from Settings > Appearance). Missing files are fine.
+include ~/.config/luxenos/sway.d/*.conf

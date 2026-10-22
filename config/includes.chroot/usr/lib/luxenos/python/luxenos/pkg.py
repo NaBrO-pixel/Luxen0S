@@ -4,8 +4,8 @@ Reading the catalogue needs no privileges: python3-apt opens the same cache
 apt uses. Every change goes through /usr/libexec/luxenos/luxenos-pkg-root
 via pkexec (polkit action org.luxenos.pkg.install, administrator password
 each time), which calls apt-get with an argv list. That keeps Debian's own
-protections in place: repository signatures are verified by apt (no
---allow-unauthenticated anywhere), the dpkg lock serialises package managers,
+protections in place: repository signatures are verified by apt (no option
+that accepts unauthenticated packages is used anywhere), the dpkg lock serialises package managers,
 and the helper's own lock serialises LuxenOS's tools.
 
 Pure helpers here are unit tested.
@@ -227,56 +227,119 @@ class PackageInfo:
         return self.installed_version is not None
 
 
-def _origins(ver):
-    out = []
-    for o in getattr(ver, "origins", []) or []:
-        out.append({"origin": o.origin, "label": o.label, "site": o.site,
-                    "archive": o.archive, "trusted": bool(o.trusted)})
-    return out
-
-
 def load_catalogue():
-    """[PackageInfo] for every package with a version (blocking: run in a thread)."""
-    import apt
-    cache = apt.Cache()
+    """[PackageInfo] for every package with a version (blocking: run in a thread).
+
+    Uses the low-level apt_pkg API: the high-level apt.Cache wrapper builds a
+    Python object per package and version and took well over 10 seconds for
+    Debian's ~65,000 packages. Origins are resolved once per index file.
+    """
+    import apt_pkg
+    apt_pkg.init()
+    cache = apt_pkg.Cache(None)
+    dep = apt_pkg.DepCache(cache)
+    sources = apt_pkg.SourceList()
+    sources.read_main_list()
+    native = apt_pkg.config.find("APT::Architecture")
+    file_origin = {}
+
+    def origins_of(ver):
+        out = []
+        for pf, _idx in ver.file_list:
+            key = pf.filename
+            if key not in file_origin:
+                index = sources.find_index(pf)
+                file_origin[key] = {"origin": pf.origin or "", "label": pf.label or "",
+                                    "site": pf.site or "", "archive": pf.archive or "",
+                                    "trusted": bool(index is not None and index.is_trusted)}
+            out.append(file_origin[key])
+        return out
+
+    summaries = read_summaries(apt_pkg)
     result = []
-    for p in cache:
-        inst = p.installed
-        cand = p.candidate
+    for p in cache.packages:
+        inst = p.current_ver
+        if p.architecture != native and inst is None:
+            continue
+        cand = dep.get_candidate_ver(p)
         ver = cand or inst
         if ver is None:
             continue
-        kind, text = classify_origins(_origins(cand) if cand is not None else _origins(inst))
+        summary = summaries.get(p.name, "")
+        kind, text = classify_origins(origins_of(ver))
         section = ver.section or ""
+        name = p.name if p.architecture == native else "%s:%s" % (p.name, p.architecture)
         result.append(PackageInfo(
-            name=p.shortname if p.shortname else p.name,
-            summary=ver.summary or "",
-            description=None,
+            name=name,
+            summary=summary,
             section=section,
-            installed_version=inst.version if inst is not None else None,
-            candidate_version=cand.version if cand is not None else None,
-            upgradable=bool(p.is_upgradable),
-            auto=bool(p.is_auto_installed) if inst is not None else False,
+            installed_version=inst.ver_str if inst is not None else None,
+            candidate_version=cand.ver_str if cand is not None else None,
+            upgradable=bool(inst is not None and cand is not None and
+                            apt_pkg.version_compare(cand.ver_str, inst.ver_str) > 0),
+            auto=bool(dep.is_auto_installed(p)) if inst is not None else False,
             origin_kind=kind,
             origin_text=text,
             size=ver.installed_size or 0,
-            homepage=ver.homepage or "",
+            homepage="",
             category=category_of(section),
-            library=is_library_like(p.shortname or p.name, section),
+            library=is_library_like(p.name, section),
         ))
     result.sort(key=lambda i: i.name)
     return result
 
 
+def read_summaries(apt_pkg, lists_dir="/var/lib/apt/lists", status="/var/lib/dpkg/status"):
+    """{package: one-line description}, read sequentially from the Packages
+    files (and dpkg's status for locally installed packages). One pass over
+    each file instead of a seek per package: per-package record lookups are
+    extremely slow when apt keeps its lists compressed."""
+    out = {}
+    files = [status]
+    try:
+        files += sorted(os.path.join(lists_dir, n) for n in os.listdir(lists_dir) if "_Packages" in n)
+    except OSError:
+        pass
+    for path in files:
+        try:
+            with apt_pkg.TagFile(path) as tags:
+                for sec in tags:
+                    name = sec.get("Package")
+                    desc = sec.get("Description") or sec.get("Description-en") or ""
+                    if name and desc and name not in out:
+                        out[name] = desc.split("\n", 1)[0]
+        except (OSError, SystemError):
+            continue
+    return out
+
+
 def describe(name):
-    """Long description of one package (python3-apt)."""
-    import apt
-    cache = apt.Cache()
+    """(long description, homepage) of one package."""
+    import apt_pkg
+    apt_pkg.init()
+    cache = apt_pkg.Cache(None)
     if name not in cache:
-        return ""
+        return "", ""
     p = cache[name]
-    ver = p.candidate or p.installed
-    return (ver.description or "") if ver is not None else ""
+    ver = apt_pkg.DepCache(cache).get_candidate_ver(p) or p.current_ver
+    if ver is None:
+        return "", ""
+    recs = apt_pkg.PackageRecords(cache)
+    desc = ""
+    try:
+        d = ver.translated_description
+        if d is not None and d.file_list:
+            recs.lookup(d.file_list[0])
+            desc = recs.long_desc or ""
+    except (SystemError, AttributeError):
+        pass
+    homepage = ""
+    try:
+        recs.lookup(ver.file_list[0])
+        homepage = recs.homepage or ""
+    except (SystemError, AttributeError, IndexError):
+        pass
+    return desc, homepage
 
 
 def search(catalogue, query, category=None, include_libraries=False, limit=300):

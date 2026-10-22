@@ -1,0 +1,414 @@
+#!/bin/bash
+# luxenos-restore-root - restore points for LuxenOS (backend of the Restore
+# Center, `luxenos-restore` on a text console and luxenos-updater).
+#
+# WHAT A RESTORE POINT IS - and is not:
+#   It is a CONFIGURATION BACKUP: a copy of /etc (system settings) plus the
+#   list of installed packages. It is NOT a snapshot of the whole system:
+#   program files are not copied, packages are reinstalled from the
+#   repositories in their CURRENT versions (no downgrades), and nothing in
+#   /home (your files and personal settings) is ever read or changed.
+#   LuxenOS installs on ext4, which has no snapshots; this tool never claims
+#   otherwise. Accounts and passwords (/etc/passwd, shadow, group, ...), the
+#   machine id and the disk layout (fstab, crypttab) are never restored.
+#
+# Subcommands (run as root; the Restore Center uses pkexec, polkit action
+# org.luxenos.restore, administrator password each time):
+#   create [--trigger manual|update] DESCRIPTION
+#   list
+#   verify ID
+#   preview ID
+#   restore ID config|packages|all      (no prompt: the caller confirmed)
+#   delete ID
+#   menu                                 interactive, for a text console
+#
+# Restore point layout (/var/backups/luxenos/luxenos-backup-YYYYmmdd-HHMMSS):
+#   info.conf               FORMAT=2 metadata (world-readable, KEY=VALUE)
+#   packages.list           dpkg --get-selections
+#   manual-packages.list    apt-mark showmanual
+#   etc-backup.tar.gz       /etc, mode 0600 (it contains /etc/shadow)
+#   SHA256SUMS              checksums of the three files above
+# Points made by older updaters (backup-metadata.txt, no SHA256SUMS) are
+# still listed and usable; they are checked by reading the archive instead.
+#
+# Output for the GUI: "@@STATUS text", "@@ITEM section text", "@@CREATED id",
+# "@@LOG text"; everything else is plain text for people.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+
+BACKUP_DIR=/var/backups/luxenos
+# Tests only: a different directory, honoured only for a root caller that
+# did not come through pkexec (pkexec clears the environment anyway).
+if [ -z "${PKEXEC_UID:-}" ] && [ -n "${LUXENOS_RESTORE_DIR:-}" ]; then
+    BACKUP_DIR=$LUXENOS_RESTORE_DIR
+fi
+ETC_ROOT=${LUXENOS_RESTORE_ETC_ROOT:-/}
+[ -z "${PKEXEC_UID:-}" ] || ETC_ROOT=/
+UPDATER_CONF=/etc/luxenos/updater.conf
+LOG=/var/log/luxenos/restore.log
+LOCK=/run/luxenos-restore.lock
+ID_RE='^luxenos-backup-[0-9]{8}-[0-9]{6}(-[0-9]+)?$'
+
+# Never restored: accounts/passwords, machine identity, disk layout, and the
+# installer leftovers that the installer removes on purpose.
+EXCLUDES=(
+    etc/passwd etc/passwd- etc/shadow etc/shadow- etc/group etc/group-
+    etc/gshadow etc/gshadow- etc/subuid etc/subuid- etc/subgid etc/subgid-
+    etc/machine-id etc/fstab etc/crypttab etc/adjtime
+    etc/luxenos-installer etc/calamares
+)
+# Package restores never touch these (removing the running kernel or the
+# desktop would leave an unbootable or unusable system).
+KEEP_PKGS='^(linux-image-|linux-headers-|linux-modules-|grub-|shim-|sway$|swaybg$|waybar$|greetd$|wlgreet$|network-manager$|systemd|dbus|apt$|dpkg$|sudo$|polkitd$|pkexec$|python3)'
+
+mkdir -p "$(dirname "$LOG")"
+note() {
+    printf '%s uid=%s %s\n' "$(date -Is)" "${PKEXEC_UID:-${SUDO_UID:-0}}" "$*" >> "$LOG" 2>/dev/null
+    logger -t luxenos-restore -- "$*" 2>/dev/null || true
+}
+status() { printf '@@STATUS %s\n' "$*"; }
+item() { printf '@@ITEM %s %s\n' "$1" "$2"; }
+fail() {
+    printf '@@LOG ERROR: %s\n' "$*"
+    note "FAILED: $*"
+    exit 1
+}
+
+need_root() { [ "$(id -u)" -eq 0 ] || fail "must run as root (use: sudo luxenos-restore)"; }
+is_live() { grep -qw 'boot=live' /proc/cmdline 2>/dev/null; }
+
+valid_id() { [[ $1 =~ $ID_RE ]] && [ -d "$BACKUP_DIR/$1" ] && [ ! -L "$BACKUP_DIR/$1" ]; }
+
+info_value() {   # info_value DIR KEY
+    sed -n "s/^$2=//p" "$1/info.conf" 2>/dev/null | head -n 1
+}
+
+retention() {
+    v=$(sed -n 's/^[[:space:]]*BACKUP_RETENTION[[:space:]]*=[[:space:]]*"\{0,1\}\([0-9]*\).*/\1/p' \
+        "$UPDATER_CONF" 2>/dev/null | tail -n 1)
+    case $v in ''|0|*[!0-9]*) echo 5 ;; *) echo "$v" ;; esac
+}
+
+lock() {
+    exec 9>"$LOCK"
+    flock -w 60 9 || fail "another restore-point operation is still running"
+}
+
+# Old updaters wrote the /etc archive world-readable; it contains /etc/shadow.
+harden_existing() {
+    [ -d "$BACKUP_DIR" ] || return 0
+    chmod 0755 "$BACKUP_DIR"
+    find "$BACKUP_DIR" -maxdepth 2 -name 'etc-backup.tar.gz' -type f -exec chmod 0600 {} + 2>/dev/null
+}
+
+sanitize() {   # printable, single line, at most 120 characters
+    printf '%s' "$1" | tr -cd '[:print:]' | tr -d '\\' | cut -c1-120
+}
+
+# --- create -----------------------------------------------------------------
+
+cmd_create() {
+    trigger=manual
+    if [ "${1:-}" = --trigger ]; then
+        case ${2:-} in manual|update|restore) trigger=$2 ;; *) fail "bad trigger" ;; esac
+        shift 2
+    fi
+    [ $# -eq 1 ] || fail "usage: create [--trigger manual|update] DESCRIPTION"
+    desc=$(sanitize "$1")
+    [ -n "$desc" ] || desc="Restore point"
+    is_live && fail "restore points are not available on the live system (nothing is installed yet)"
+
+    mkdir -p "$BACKUP_DIR" || fail "cannot create $BACKUP_DIR"
+    harden_existing
+    avail=$(df -Pk "$BACKUP_DIR" | awk 'NR==2 {print $4}')
+    [ "${avail:-0}" -gt 204800 ] || fail "less than 200 MB free on the disk; free some space first"
+
+    id="luxenos-backup-$(date +%Y%m%d-%H%M%S)"
+    n=1
+    base=$id
+    while [ -e "$BACKUP_DIR/$id" ]; do id="$base-$n"; n=$((n + 1)); done
+    dir=$BACKUP_DIR/$id
+    mkdir -m 0755 "$dir" || fail "cannot create $dir"
+    note "create $id trigger=$trigger desc=$desc"
+
+    status "Saving the list of installed packages…"
+    dpkg --get-selections > "$dir/packages.list" || { rm -rf "$dir"; fail "dpkg --get-selections failed"; }
+    apt-mark showmanual > "$dir/manual-packages.list" 2>/dev/null || true
+
+    status "Saving system settings (/etc)…"
+    tar_excludes=()
+    for e in etc/luxenos-installer etc/calamares; do tar_excludes+=(--exclude="$e"); done
+    # Exit status 1 only means a file changed while it was read: still usable.
+    tar -czf "$dir/etc-backup.tar.gz" -C "$ETC_ROOT" "${tar_excludes[@]}" etc 2>/dev/null
+    rc=$?
+    if [ "$rc" -gt 1 ] || ! tar -tzf "$dir/etc-backup.tar.gz" >/dev/null 2>&1; then
+        rm -rf "$dir"
+        fail "the settings archive could not be written (tar status $rc)"
+    fi
+    chmod 0600 "$dir/etc-backup.tar.gz"
+    chmod 0644 "$dir/packages.list" "$dir/manual-packages.list"
+
+    {
+        echo "FORMAT=2"
+        echo "CREATED=$(date +%s)"
+        echo "CREATED_ISO=$(date -Is)"
+        echo "DESCRIPTION=$desc"
+        echo "TRIGGER=$trigger"
+        echo "LUXENOS_VERSION=$(sanitize "$(cat /etc/luxenos-version 2>/dev/null || echo unknown)")"
+        echo "KERNEL=$(uname -r)"
+        echo "ROOT_FS=$(findmnt -n -o FSTYPE / 2>/dev/null || echo unknown)"
+        echo "PACKAGES=$(grep -c . "$dir/packages.list")"
+        echo "SCOPE=etc packages"
+    } > "$dir/info.conf"
+    chmod 0644 "$dir/info.conf"
+    (cd "$dir" && sha256sum info.conf packages.list manual-packages.list etc-backup.tar.gz > SHA256SUMS)
+    chmod 0644 "$dir/SHA256SUMS"
+
+    # Keep only the newest N restore points (only our own directories).
+    keep=$(retention)
+    find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'luxenos-backup-*' -printf '%f\n' \
+        | sort -r | tail -n +$((keep + 1)) | while IFS= read -r old; do
+            [[ $old =~ $ID_RE ]] || continue
+            note "retention: removing $old"
+            rm -rf "${BACKUP_DIR:?}/$old"
+        done
+
+    status "Restore point created"
+    printf '@@CREATED %s\n' "$id"
+    note "created $id"
+}
+
+# --- list / verify ------------------------------------------------------------
+
+cmd_list() {
+    [ -d "$BACKUP_DIR" ] || { echo "No restore points."; return 0; }
+    found=0
+    while IFS= read -r id; do
+        [[ $id =~ $ID_RE ]] || continue
+        found=1
+        dir=$BACKUP_DIR/$id
+        desc=$(info_value "$dir" DESCRIPTION)
+        [ -n "$desc" ] || desc="(older backup made by the updater)"
+        printf '%s  %s\n' "$id" "$desc"
+    done < <(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'luxenos-backup-*' -printf '%f\n' | sort -r)
+    [ "$found" -eq 1 ] || echo "No restore points."
+}
+
+# verify ID -> 0 if usable. Prints what was checked.
+verify_point() {
+    dir=$BACKUP_DIR/$1
+    [ -f "$dir/etc-backup.tar.gz" ] || { echo "missing etc-backup.tar.gz"; return 1; }
+    [ -s "$dir/packages.list" ] || { echo "missing packages.list"; return 1; }
+    if [ -f "$dir/SHA256SUMS" ]; then
+        if ! (cd "$dir" && sha256sum --quiet -c SHA256SUMS >/dev/null 2>&1); then
+            echo "checksum mismatch: the restore point was changed or damaged"
+            return 1
+        fi
+        [ "$(info_value "$dir" FORMAT)" = 2 ] || { echo "unknown metadata format"; return 1; }
+        echo "checksums OK"
+    else
+        echo "older restore point without checksums: archive read test only"
+    fi
+    if ! tar -tzf "$dir/etc-backup.tar.gz" >/dev/null 2>&1; then
+        echo "the settings archive cannot be read"
+        return 1
+    fi
+    if tar -tzf "$dir/etc-backup.tar.gz" | grep -qvE '^etc(/|$)'; then
+        echo "the settings archive contains files outside /etc; refusing it"
+        return 1
+    fi
+    if grep -qvE '^[a-z0-9][a-z0-9+.:-]*[[:space:]]+(install|hold|deinstall|purge)$' "$dir/packages.list"; then
+        echo "packages.list is malformed"
+        return 1
+    fi
+    echo "archive and package list readable"
+    return 0
+}
+
+cmd_verify() {
+    valid_id "$1" || fail "no such restore point: $1"
+    status "Checking $1…"
+    if out=$(verify_point "$1"); then
+        printf '%s\n' "$out" | while IFS= read -r l; do item verify "$l"; done
+        status "Restore point is valid"
+    else
+        printf '%s\n' "$out" | while IFS= read -r l; do item verify "$l"; done
+        fail "restore point $1 is not usable: $(printf '%s' "$out" | tail -n 1)"
+    fi
+}
+
+# --- preview ------------------------------------------------------------------
+
+# package_changes ID -> lines "reinstall NAME" / "remove NAME"
+package_changes() {
+    dir=$BACKUP_DIR/$1
+    then_list=$(awk '$2 == "install" || $2 == "hold" {print $1}' "$dir/packages.list" | sed 's/:'"$(dpkg --print-architecture)"'$//' | sort -u)
+    now_list=$(dpkg --get-selections | awk '$2 == "install" || $2 == "hold" {print $1}' | sed 's/:'"$(dpkg --print-architecture)"'$//' | sort -u)
+    comm -23 <(printf '%s\n' "$then_list") <(printf '%s\n' "$now_list") | grep -v '^$' | grep -Ev "$KEEP_PKGS" | sed 's/^/reinstall /'
+    comm -13 <(printf '%s\n' "$then_list") <(printf '%s\n' "$now_list") | grep -v '^$' | grep -Ev "$KEEP_PKGS" | sed 's/^/remove /'
+}
+
+excluded() {
+    for e in "${EXCLUDES[@]}"; do
+        case $1 in "$e"|"$e"/*) return 0 ;; esac
+    done
+    return 1
+}
+
+config_changes() {   # lines "changed PATH" / "missing PATH"
+    dir=$BACKUP_DIR/$1
+    tar -dzf "$dir/etc-backup.tar.gz" -C "$ETC_ROOT" 2>&1 | while IFS= read -r l; do
+        path=${l%%: *}
+        path=${path#tar: }
+        excluded "$path" && continue
+        case $l in
+            *"Cannot stat"*|*"No such file"*) echo "missing /$path" ;;
+            *"differ"*) echo "changed /$path" ;;
+        esac
+    done | sort -u
+}
+
+cmd_preview() {
+    valid_id "$1" || fail "no such restore point: $1"
+    out=$(verify_point "$1") || fail "restore point is not usable: $(printf '%s' "$out" | tail -n 1)"
+    status "Comparing settings with the restore point…"
+    cfg=$(config_changes "$1")
+    n_changed=$(printf '%s\n' "$cfg" | grep -c '^changed ')
+    n_missing=$(printf '%s\n' "$cfg" | grep -c '^missing ')
+    item summary "Settings: $n_changed file(s) in /etc would be put back to their saved version, $n_missing deleted file(s) would be recreated. Files created since then are kept."
+    printf '%s\n' "$cfg" | grep . | head -n 300 | while IFS= read -r l; do item config "$l"; done
+    status "Comparing installed packages…"
+    pk=$(package_changes "$1")
+    n_re=$(printf '%s\n' "$pk" | grep -c '^reinstall ')
+    n_rm=$(printf '%s\n' "$pk" | grep -c '^remove ')
+    item summary "Packages: $n_re would be installed again (current versions from the repositories), $n_rm installed since then would be removed. Kernels and core desktop packages are never touched."
+    printf '%s\n' "$pk" | grep . | head -n 500 | while IFS= read -r l; do item packages "$l"; done
+    item summary "Not covered: your files and personal settings in /home, program files, accounts and passwords, disk layout. Package versions are not rolled back."
+    status "Preview ready"
+}
+
+# --- restore ------------------------------------------------------------------
+
+restore_config() {
+    dir=$BACKUP_DIR/$1
+    tar_excludes=()
+    for e in "${EXCLUDES[@]}"; do tar_excludes+=(--exclude="$e"); done
+    status "Restoring system settings…"
+    if ! tar -xzpf "$dir/etc-backup.tar.gz" -C "$ETC_ROOT" "${tar_excludes[@]}" 2>>"$LOG"; then
+        fail "some settings could not be restored (see $LOG)"
+    fi
+    note "restored config from $1"
+}
+
+restore_packages() {
+    args=()
+    while IFS=' ' read -r action name; do
+        [[ $name =~ ^[a-z0-9][a-z0-9+.:-]*$ ]] || continue
+        case $action in
+            reinstall) args+=("$name") ;;
+            remove) args+=("$name-") ;;
+        esac
+    done < <(package_changes "$1")
+    if [ ${#args[@]} -eq 0 ]; then
+        status "Installed packages already match the restore point"
+        return 0
+    fi
+    status "Refreshing package lists…"
+    apt-get update >>"$LOG" 2>&1 || printf '@@LOG %s\n' "WARNING: apt-get update failed; using the lists already on disk"
+    # Drop packages that no longer exist in any repository, then install.
+    for _try in 1 2 3 4 5; do
+        sim=$(LC_ALL=C.UTF-8 apt-get -s install -- "${args[@]}" 2>&1) && break
+        missing=$(printf '%s\n' "$sim" | sed -n "s/^E: Unable to locate package \(.*\)$/\1/p; s/^E: Package '\([^']*\)' has no installation candidate$/\1/p")
+        [ -n "$missing" ] || { printf '%s\n' "$sim" | grep '^E:' | sed 's/^/@@LOG /'; fail "apt cannot apply the package list"; }
+        for m in $missing; do
+            printf '@@LOG %s\n' "skipped (no longer available): $m"
+            new=()
+            for a in "${args[@]}"; do [ "$a" = "$m" ] || new+=("$a"); done
+            args=("${new[@]}")
+        done
+        [ ${#args[@]} -gt 0 ] || return 0
+    done
+    status "Installing and removing packages…"
+    if ! env DEBIAN_FRONTEND=noninteractive apt-get -y -o APT::Status-Fd=3 -o DPkg::Lock::Timeout=120 \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        install -- "${args[@]}" 3>&1 >>"$LOG" 2>&1; then
+        fail "the package changes failed; run 'sudo apt-get -f install' and see $LOG"
+    fi
+    note "restored packages from $1"
+}
+
+cmd_restore() {
+    [ $# -eq 2 ] || fail "usage: restore ID config|packages|all"
+    valid_id "$1" || fail "no such restore point: $1"
+    case $2 in config|packages|all) ;; *) fail "scope must be config, packages or all" ;; esac
+    is_live && fail "restoring is not possible on the live system"
+    out=$(verify_point "$1") || fail "restore point is not usable: $(printf '%s' "$out" | tail -n 1)"
+    note "restore $1 scope=$2"
+    # Undo point first, so a restore can itself be reverted.
+    status "Saving the current state as a restore point first…"
+    # (In-process: the lock is already held by this restore.)
+    ( cmd_create --trigger restore "Before restoring $1" ) | grep '^@@CREATED' \
+        || fail "could not save the current state first; nothing was changed"
+    case $2 in config|all) restore_config "$1" ;; esac
+    case $2 in packages|all) restore_packages "$1" ;; esac
+    status "Restore finished. Restart the computer so every service uses the restored settings."
+}
+
+cmd_delete() {
+    valid_id "$1" || fail "no such restore point: $1"
+    rm -rf "${BACKUP_DIR:?}/$1" || fail "could not delete $1"
+    note "deleted $1"
+    status "Restore point deleted"
+}
+
+# --- text console menu (recovery when the desktop does not start) -------------
+
+cmd_menu() {
+    echo "LuxenOS restore points (configuration backups, not full system snapshots)"
+    echo "Your files in /home are never changed. Accounts and passwords are kept."
+    echo
+    mapfile -t ids < <(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -name 'luxenos-backup-*' -printf '%f\n' 2>/dev/null | sort -r)
+    if [ ${#ids[@]} -eq 0 ]; then
+        echo "No restore points found in $BACKUP_DIR."
+        read -r -p "Create one now? [y/N] " a
+        [ "$a" = y ] && cmd_create "Created from the text console"
+        return 0
+    fi
+    i=1
+    for id in "${ids[@]}"; do
+        printf '%2d) %s  %s\n' "$i" "$id" "$(info_value "$BACKUP_DIR/$id" DESCRIPTION)"
+        i=$((i + 1))
+    done
+    echo " c) create a new restore point    q) quit"
+    read -r -p "Choice: " c
+    case $c in
+        q|'') return 0 ;;
+        c) read -r -p "Description: " d; cmd_create "${d:-Created from the text console}"; return ;;
+        *[!0-9]*) echo "Invalid choice"; return 1 ;;
+    esac
+    [ "$c" -ge 1 ] && [ "$c" -le ${#ids[@]} ] || { echo "Invalid choice"; return 1; }
+    id=${ids[$((c - 1))]}
+    cmd_preview "$id" | sed -e 's/^@@ITEM summary /\n/' -e 's/^@@ITEM [a-z]* /  /' -e 's/^@@STATUS /-- /'
+    echo
+    echo "Restore: 1) settings only  2) packages only  3) both  q) cancel"
+    read -r -p "Choice: " s
+    case $s in 1) scope=config ;; 2) scope=packages ;; 3) scope=all ;; *) echo "Cancelled"; return 0 ;; esac
+    read -r -p "Type RESTORE to restore $id ($scope): " confirm
+    [ "$confirm" = RESTORE ] || { echo "Cancelled"; return 0; }
+    cmd_restore "$id" "$scope" | sed -e 's/^@@[A-Z]* //'
+}
+
+need_root
+case ${1:-menu} in
+    create) shift; lock; cmd_create "$@" ;;
+    list) cmd_list ;;
+    verify) [ $# -eq 2 ] || fail "usage: verify ID"; cmd_verify "$2" ;;
+    preview) [ $# -eq 2 ] || fail "usage: preview ID"; cmd_preview "$2" ;;
+    restore) shift; lock; cmd_restore "$@" ;;
+    delete) [ $# -eq 2 ] || fail "usage: delete ID"; lock; cmd_delete "$2" ;;
+    menu) cmd_menu ;;
+    *) fail "unknown action (create, list, verify, preview, restore, delete, menu)" ;;
+esac

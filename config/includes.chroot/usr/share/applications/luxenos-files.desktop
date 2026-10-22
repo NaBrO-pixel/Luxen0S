@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+GenericName=File Manager
+Comment=Browse files and folders, drives and archives (Thunar)
+Exec=thunar %U
+Icon=system-file-manager
+Terminal=false
+StartupNotify=true
+StartupWMClass=thunar
+Categories=System;Core;GTK;FileTools;FileManager;
+Keywords=folder;explorer;thunar;drive;usb;
+MimeType=inode/directory;
