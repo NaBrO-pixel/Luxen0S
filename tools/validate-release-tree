@@ -88,6 +88,9 @@ check_shell_syntax config/hooks/live/0300-setup-auto-updates.hook.chroot
 
 # Liquid-glass theme, .deb / .exe double-click integration
 check_file config/includes.chroot/etc/luxenos/glass.conf
+check_file config/includes.chroot/usr/share/backgrounds/luxenos/wallpaper-blur.png
+grep -q 'luxenos-glass apply --sway-only' config/includes.chroot/etc/greetd/sway-config \
+    || fail "greeter compositor does not apply the glass look"
 check_file config/includes.chroot/etc/luxenos/wine.conf
 check_file config/includes.chroot/etc/xdg/mimeapps.list
 check_file config/includes.chroot/etc/skel/.config/wofi/config
@@ -189,6 +192,15 @@ for intensity in 0 50 100; do
         sh config/includes.chroot/usr/local/bin/luxenos-glass get intensity)
     [ "$actual" = "$intensity" ] || { rm -rf "$glass_home"; fail "intensity getter returned '$actual' for $intensity"; }
 done
+
+# The lock screen (password screen) must get the glass palette.
+lock_args=$(HOME="$glass_home" XDG_CONFIG_HOME="$glass_home/.config" \
+    LUXENOS_GLASS_SYS_CONF=config/includes.chroot/etc/luxenos/glass.conf \
+    sh config/includes.chroot/usr/local/bin/luxenos-glass lock-args 2>/dev/null)
+printf '%s\n' "$lock_args" | grep -qx -- '--inside-color' \
+    || { rm -rf "$glass_home"; fail "luxenos-glass lock-args produced no glass lock-screen style"; }
+grep -q 'luxenos-glass lock-args' config/includes.chroot/usr/local/bin/luxenos-lock \
+    || { rm -rf "$glass_home"; fail "luxenos-lock does not use the glass lock-screen style"; }
 
 # A configured system-wide intensity must drive the generated theme when no
 # per-user override exists.
