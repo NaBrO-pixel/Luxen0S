@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""LuxenOS System Restore Center (graphical front end of luxenos-restore).
+
+Implementation: /usr/lib/luxenos/python/luxenos/restorecenter.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("LUXENOS_PYLIB", "/usr/lib/luxenos/python"))
+from luxenos.restorecenter import main  # noqa: E402
+
+sys.exit(main())

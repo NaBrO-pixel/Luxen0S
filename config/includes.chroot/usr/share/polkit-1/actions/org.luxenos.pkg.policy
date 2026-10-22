@@ -7,8 +7,8 @@
   <vendor_url>https://github.com/NaBrO-pixel/Luxen0S</vendor_url>
 
   <action id="org.luxenos.pkg.install">
-    <description>Install or update software packages</description>
-    <message>Authentication is required to install software on this computer</message>
+    <description>Install, update or remove software packages</description>
+    <message>Authentication is required to install, update or remove software on this computer</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""LuxenOS Quick Settings: Wi-Fi, Bluetooth, volume, brightness, night light, Do Not Disturb, power.
+
+Implementation: /usr/lib/luxenos/python/luxenos/quicksettings.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("LUXENOS_PYLIB", "/usr/lib/luxenos/python"))
+from luxenos.quicksettings import main  # noqa: E402
+
+sys.exit(main())

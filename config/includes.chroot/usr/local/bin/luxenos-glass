@@ -7,6 +7,9 @@
 #   ~/.config/luxenos/glass/wofi.css                 launcher/menus; copied to
 #                                                    ~/.config/wofi/style.css
 #   ~/.config/luxenos/glass/gtk3.css|gtk4.css        GTK accents and radii
+#   ~/.config/luxenos/glass/shell.css                LuxenOS apps: launcher, dock,
+#                                                    quick settings, overview,
+#                                                    Software Center, ...
 #   ~/.config/dunst/dunstrc                          notifications
 #   ~/.config/gtk-3.0|gtk-4.0/settings.ini           dark/light + animations
 #   ~/.config/qt6ct/qt6ct.conf + colors/             Qt apps (polkit password
@@ -33,6 +36,7 @@
 #   luxenos-glass intensity 0..100  (Accessibility: Liquid Glass slider)
 #   luxenos-glass theme dark|light
 #   luxenos-glass set GLASS_KEY VALUE
+#   luxenos-glass set-many GLASS_KEY=VALUE...   (one apply; used by theme packs)
 #   luxenos-glass get NAME         (base, text, accent, opacity, ... see status)
 #   luxenos-glass status           what is active and why
 #   luxenos-glass namespaces       layer-shell namespaces used for SwayFX effects
@@ -409,11 +413,13 @@ detect_compositor() {
 # wlr-layer-shell namespaces are chosen by each client and are NOT exposed by
 # Sway/SwayFX IPC, so they cannot be listed at runtime. Values below were
 # recorded from the real clients (WAYLAND_DEBUG=client): waybar "waybar",
-# wofi "wofi", dunst "notifications". (The wlgreet login screen requests an
+# wofi "wofi", dunst "notifications", and the LuxenOS shell apps
+# "luxenos-launcher", "luxenos-dock", "luxenos-quicksettings",
+# "luxenos-overview" (set in their source). (The wlgreet login screen requests an
 # empty namespace, so it cannot be targeted; it sits on a pre-blurred
 # wallpaper instead, see cmd_greeter_config.) Only components that are installed get
-# effects; GLASS_NS_BAR / GLASS_NS_LAUNCHER / GLASS_NS_NOTIFY override the
-# namespace list if a component uses another one.
+# effects; GLASS_NS_BAR / GLASS_NS_LAUNCHER / GLASS_NS_NOTIFY / GLASS_NS_SHELL
+# override the namespace list if a component uses another one.
 
 ns_bar() {
     _l=${GLASS_NS_BAR:-}
@@ -434,6 +440,17 @@ ns_notify() {
     if [ -z "$_l" ]; then
         if have dunst || have mako; then _l="notifications"; fi
         if have swaync; then _l="$_l swaync-notification-window swaync-control-center"; fi
+    fi
+    printf '%s' "$_l"
+}
+
+ns_shell() {
+    _l=${GLASS_NS_SHELL:-}
+    if [ -z "$_l" ]; then
+        if have luxenos-launcher; then _l="luxenos-launcher"; fi
+        if have luxenos-dock; then _l="$_l luxenos-dock"; fi
+        if have luxenos-quick-settings; then _l="$_l luxenos-quicksettings"; fi
+        if have luxenos-overview; then _l="$_l luxenos-overview"; fi
     fi
     printf '%s' "$_l"
 }
@@ -506,6 +523,7 @@ window#waybar {
 #pulseaudio,
 #tray,
 #custom-power-profile,
+#custom-quick-settings,
 #custom-controls {
     margin: 4px 3px;
     padding: 0 12px;
@@ -538,8 +556,10 @@ window#waybar {
 }
 #workspaces button.urgent { color: @glass_crit; }
 
-#custom-controls { color: @glass_accent; }
+#custom-controls,
+#custom-quick-settings { color: @glass_accent; }
 #custom-controls:hover,
+#custom-quick-settings:hover,
 #custom-power-profile:hover,
 #pulseaudio:hover,
 #network:hover { background-color: @glass_bg_strong; }
@@ -685,6 +705,47 @@ INI
     else
         debug "leaving user-owned $f alone"
     fi
+}
+
+# LuxenOS desktop apps (luxenos.ui): colours plus everything that depends on
+# glass.conf numbers. Layout lives in /usr/share/luxenos/ui/shell.css; this
+# file is loaded after it. Layer surfaces (launcher, dock, quick settings,
+# overview) are glass panels; ordinary app windows only take accents/corners.
+write_shell() {
+    install_file "$OUT/shell.css" <<CSS
+/* $MARK by luxenos-glass; edit /etc/luxenos/glass.conf or use
+   Settings > Accessibility instead. */
+$(palette_css)
+
+window.lx-layer, window.lx-layer * {
+    font-family: "$GLASS_FONT", "Noto Sans", sans-serif;
+}
+window.lx-layer { font-size: $(( GLASS_FONT_SIZE + 1 ))px; }
+
+.lx-glass {
+    background-color: @glass_bg;
+    $(sheen_css)
+    border: 1px solid @glass_border;
+    border-radius: ${R}px;
+    $(shadow_css)
+}
+.lx-glass-strong { background-color: @glass_bg_strong; }
+.lx-search {
+    color: @glass_fg;
+    background-color: @glass_bg_strong;
+    background-image: none;
+    border: 1px solid @glass_border;
+    border-radius: ${R_IN}px;
+    box-shadow: inset 0 1px 0 @glass_hi;
+}
+.lx-search:focus-within { border-color: @glass_accent; }
+.lx-results row, .lx-row, .lx-tile, .lx-dock-item, .lx-window-tile,
+.lx-card, .lx-banner { border-radius: ${R_IN}px; }
+.lx-ws-card { border-radius: ${R}px; }
+.lx-results row, .lx-tile, .lx-dock-item, .lx-window-tile, .lx-ws-card, .lx-dot {
+    $(transition_css)
+}
+CSS
 }
 
 # Qt apps (polkit-kde password prompt, pavucontrol-qt) through qt6ct: Fusion
@@ -875,11 +936,12 @@ apply_sway() {
     fi
 
     found=0
-    for kind in bar launcher notify; do
+    for kind in bar launcher notify shell; do
         case $kind in
             bar) nss=$(ns_bar); how=bar ;;
             launcher) nss=$(ns_launcher); how=panel ;;
             notify) nss=$(ns_notify); how=panel ;;
+            shell) nss=$(ns_shell); how=panel ;;
         esac
         if [ -z "$nss" ]; then
             debug "no $kind component installed: no layer effects for it"
@@ -914,6 +976,7 @@ cmd_apply() {
     write_waybar
     write_wofi
     write_gtk
+    write_shell
     write_qt
     write_dunst
     if [ "$mode" != --files-only ]; then
@@ -1069,6 +1132,7 @@ cmd_namespaces() {
     printf 'bar        %s\n' "$(ns_bar)"
     printf 'launcher   %s\n' "$(ns_launcher)"
     printf 'notify     %s\n' "$(ns_notify)"
+    printf 'shell      %s\n' "$(ns_shell)"
     printf '\nNamespaces are chosen by each program and are not listed by Sway IPC.\nTo verify one: WAYLAND_DEBUG=client <program> 2>&1 | grep get_layer_surface\n'
 }
 
@@ -1272,6 +1336,20 @@ case "${1:-}" in
     set)
         [ $# -eq 3 ] || die "usage: luxenos-glass set GLASS_KEY VALUE"
         set_user_key "$2" "$3"
+        cmd_apply || exit $?; reload_ui
+        ;;
+    set-many)
+        # Validate every pair before writing any, so a bad pair changes nothing.
+        [ $# -ge 2 ] || die "usage: luxenos-glass set-many GLASS_KEY=VALUE..."
+        shift
+        for kv in "$@"; do
+            case $kv in GLASS_*=?*) ;; *) die "not a GLASS_KEY=VALUE pair: $kv" ;; esac
+            k=${kv%%=*}; v=${kv#*=}
+            case $k in *[!A-Z0-9_]*) die "bad key: $k" ;; esac
+            case $v in *[!A-Za-z0-9#._\ -]*) die "bad value for $k" ;; esac
+        done
+        mkdir -p "$CFG/luxenos" || die "cannot create $CFG/luxenos"
+        for kv in "$@"; do set_user_key "${kv%%=*}" "${kv#*=}"; done
         cmd_apply || exit $?; reload_ui
         ;;
     get) cmd_get "${2:-}" ;;

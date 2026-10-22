@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""LuxenOS theme packs: list, apply, preview and revert complete appearance presets.
+
+Implementation: /usr/lib/luxenos/python/luxenos/themes.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("LUXENOS_PYLIB", "/usr/lib/luxenos/python"))
+from luxenos.themes import main  # noqa: E402
+
+sys.exit(main())

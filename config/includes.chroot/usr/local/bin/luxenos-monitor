@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""LuxenOS System Monitor.
+
+Implementation: /usr/lib/luxenos/python/luxenos/monitor.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("LUXENOS_PYLIB", "/usr/lib/luxenos/python"))
+from luxenos.monitor import main  # noqa: E402
+
+sys.exit(main())
