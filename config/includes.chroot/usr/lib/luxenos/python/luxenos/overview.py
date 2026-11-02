@@ -11,15 +11,27 @@ depend on X11 or screencopy.
     Menu key or Shift+F10): move it there; "New workspace" creates the next
     free numbered one
   * type to filter windows by title or app; Escape closes
+  * arrow keys move between windows, Enter focuses
+  * each workspace card has a menu: rename (the number is kept, "2: Mail"),
+    set or remove a wallpaper for that workspace (luxenos-wallpaper), and
+    close the workspace (its windows move to another one; Sway removes empty
+    workspaces by itself)
+  * window previews: windows that are on screen when the overview opens are
+    captured with grim (scaled down, never saved); other windows show their
+    icon. Off with OVERVIEW_PREVIEWS=no in ~/.config/luxenos/overview.conf.
 
 Moves use `[con_id=N] move container to workspace ...`, which Sway applies
 reliably for tiled and floating windows.
 """
 
+import os
+import shutil
+import subprocess
 import sys
+import threading
 
 from . import apps as appsmod
-from . import swayipc, ui
+from . import config, swayipc, ui
 
 APP_ID = "org.luxenos.Overview"
 
@@ -45,6 +57,76 @@ def move_cmd(con_id, ws_name=None, number=None):
     return "%s move container to workspace %s" % (crit, swayipc.quote_name(ws_name))
 
 
+def display_name(ws):
+    """'2: Mail' -> 'Mail'; '3' -> ''."""
+    name = str(ws.get("name", ""))
+    num = ws.get("num", -1)
+    if num >= 0 and name.startswith("%d:" % num):
+        return name.split(":", 1)[1].strip()
+    if num >= 0 and name == str(num):
+        return ""
+    return name
+
+
+def rename_cmd(ws, label):
+    """Keep the workspace number so Super+N still reaches it."""
+    label = " ".join(label.split())[:40]
+    num = ws.get("num", -1)
+    new = ("%d: %s" % (num, label) if label else str(num)) if num >= 0 else (label or ws["name"])
+    return "rename workspace %s to %s" % (swayipc.quote_name(ws["name"]), swayipc.quote_name(new))
+
+
+def close_cmds(ws, workspaces):
+    """Move every window of ws to the nearest other workspace (or a new one)."""
+    others = [w for w in workspaces if w["name"] != ws["name"]]
+    if others:
+        target = min(others, key=lambda w: abs(w.get("num", 0) - ws.get("num", 0)))
+        dest = "workspace %s" % swayipc.quote_name(target["name"])
+    else:
+        dest = "workspace number %d" % next_free_workspace(workspaces)
+    cmds = ["%s move container to %s" % (swayipc.con_criteria(w["id"]), dest) for w in ws["windows"]]
+    cmds.append(dest)
+    return cmds
+
+
+def preview_targets(tree):
+    """[(con_id, 'x,y wxh')] of windows visible on screen right now."""
+    out = []
+    for w, ws, _o in swayipc.iter_windows(tree):
+        r = w.get("rect") or {}
+        if ws == "__i3_scratch" or not w.get("visible") or r.get("width", 0) < 40 or r.get("height", 0) < 40:
+            continue
+        out.append((w["id"], "%d,%d %dx%d" % (r["x"], r["y"], r["width"], r["height"])))
+    return out
+
+
+def capture_previews(tree, scale=0.25, timeout=1.5):
+    """{con_id: png bytes}. Needs grim; windows are captured in parallel."""
+    if not shutil.which("grim") or not os.environ.get("WAYLAND_DISPLAY"):
+        return {}
+    if not config.get_bool(config.read_kv(os.path.join(config.luxenos_config_dir(), "overview.conf")),
+                           "OVERVIEW_PREVIEWS", True):
+        return {}
+    shots, threads = {}, []
+
+    def grab(con_id, geom):
+        try:
+            p = subprocess.run(["grim", "-s", str(scale), "-g", geom, "-t", "png", "-l", "1", "-"],
+                               capture_output=True, timeout=timeout, check=False)
+            if p.returncode == 0 and p.stdout:
+                shots[con_id] = p.stdout
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    for con_id, geom in preview_targets(tree)[:12]:
+        t = threading.Thread(target=grab, args=(con_id, geom), daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join(timeout + 0.5)
+    return shots
+
+
 def matches(window, entry, query):
     q = appsmod.normalize(query)
     if not q:
@@ -59,7 +141,7 @@ def main(argv=None):
     from gi.repository import Gdk, Gio, GLib, GObject, Pango
 
     class Overview(Gtk.ApplicationWindow):
-        def __init__(self, app, tree, outputs):
+        def __init__(self, app, tree, outputs, previews=None):
             super().__init__(application=app, title="Workspace Overview")
             self.app = app
             self.add_css_class("lx-layer")
@@ -76,6 +158,7 @@ def main(argv=None):
                                  keyboard="exclusive", exclusive_zone=-1, monitor=monitor):
                 self.fullscreen()
             self.tree = tree
+            self.previews = previews or {}
             self.outputs = [o for o in outputs if o.get("active", True)]
             self.workspaces = swayipc.workspaces_with_windows(tree)
             self.entries = appsmod.load_apps(include_hidden=True)
@@ -107,7 +190,8 @@ def main(argv=None):
             top.append(ui.icon_button("window-close-symbolic", "Close overview", self.close))
             root.append(top)
             root.append(ui.label("Click a window to focus it, drag it to another workspace to move it. "
-                                 "1-9 switch workspace, Esc closes.", "lx-dim lx-small"))
+                                 "Arrow keys move, 1-9 switch workspace, ☰ renames or closes a workspace, "
+                                 "Esc closes.", "lx-dim lx-small"))
 
             scroller = Gtk.ScrolledWindow(vexpand=True)
             scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -131,7 +215,32 @@ def main(argv=None):
             if not self.search.get_text() and Gdk.KEY_1 <= keyval <= Gdk.KEY_9:
                 self.run_and_close("workspace number %d" % (keyval - Gdk.KEY_0))
                 return True
+            dirs = {Gdk.KEY_Left: Gtk.DirectionType.LEFT, Gdk.KEY_Right: Gtk.DirectionType.RIGHT,
+                    Gdk.KEY_Up: Gtk.DirectionType.UP, Gdk.KEY_Down: Gtk.DirectionType.DOWN}
+            if keyval in dirs:
+                focus = self.get_focus()
+                if focus is self.search or (focus is not None and focus.is_ancestor(self.search)):
+                    if keyval != Gdk.KEY_Down:
+                        return False
+                    first = self.first_tile()
+                    if first is not None:
+                        first.grab_focus()
+                    return True
+                self.body.child_focus(dirs[keyval])
+                return True
             return False
+
+        def first_tile(self):
+            stack = [self.body]
+            while stack:
+                w = stack.pop(0)
+                if w.has_css_class("lx-window-tile"):
+                    return w
+                c = w.get_first_child()
+                while c is not None:
+                    stack.append(c)
+                    c = c.get_next_sibling()
+            return None
 
         def entry_for(self, window):
             return self.index.lookup(swayipc.window_app_key(window))
@@ -172,13 +281,23 @@ def main(argv=None):
                 card.add_css_class("focused")
             head = Gtk.Button()
             head.add_css_class("flat")
+            head.set_hexpand(True)
             n = len(ws["windows"])
-            head_label = ui.label("Workspace %s  ·  %d window%s" % (ws["name"], n, "" if n == 1 else "s"),
-                                  "lx-heading")
+            label = display_name(ws)
+            title = ("%d · %s" % (ws["num"], label) if ws.get("num", -1) >= 0 else label) if label \
+                else "Workspace %s" % ws["name"]
+            head_label = ui.label("%s  ·  %d window%s" % (title, n, "" if n == 1 else "s"), "lx-heading")
             head.set_child(head_label)
-            ui.accessible_label(head, "Switch to workspace %s, %d windows" % (ws["name"], n))
+            ui.accessible_label(head, "Switch to %s, %d windows" % (title, n))
             head.connect("clicked", lambda *_: self.run_and_close(workspace_cmd(ws)))
-            card.append(head)
+            top = Gtk.Box(spacing=4)
+            top.append(head)
+            menu = Gtk.MenuButton(icon_name="open-menu-symbolic")
+            menu.add_css_class("flat")
+            ui.accessible_label(menu, "Workspace %s options" % ws["name"])
+            menu.set_popover(self.workspace_menu(ws))
+            top.append(menu)
+            card.append(top)
             shown = 0
             for w in ws["windows"]:
                 entry = self.entry_for(w)
@@ -220,6 +339,22 @@ def main(argv=None):
                 btn.add_css_class("focused")
             box = Gtk.Box(spacing=10)
             gicon = entry.info.get_icon() if entry is not None else None
+            shot = self.previews.get(w.get("id"))
+            if shot:
+                try:
+                    tex = Gdk.Texture.new_from_bytes(GLib.Bytes.new(shot))
+                    pic = Gtk.Picture.new_for_paintable(tex)
+                    pic.set_can_shrink(True)
+                    pic.set_size_request(160, 100)
+                    pic.add_css_class("lx-preview")
+                    outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                    outer.append(pic)
+                    outer.append(box)
+                    box_parent = outer
+                except GLib.Error:
+                    box_parent = box
+            else:
+                box_parent = box
             box.append(ui.gicon_image(gicon, 32))
             vb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             title = w.get("name") or "(untitled)"
@@ -231,7 +366,7 @@ def main(argv=None):
             extra = " · floating" if w.get("type") == "floating_con" else ""
             vb.append(ui.label(app_name + extra, "lx-dim lx-small"))
             box.append(vb)
-            btn.set_child(box)
+            btn.set_child(box_parent)
             ui.accessible_label(btn, "%s, %s. Enter to focus, Menu key for more." % (title, app_name))
             btn.connect("clicked", lambda *_: self.run_and_close("%s focus" % swayipc.con_criteria(w["id"])))
             drag = Gtk.DragSource()
@@ -247,6 +382,69 @@ def main(argv=None):
                 (kv == Gdk.KEY_F10 and st & Gdk.ModifierType.SHIFT_MASK) else False)
             btn.add_controller(keys)
             return btn
+
+        def workspace_menu(self, ws):
+            pop = Gtk.Popover()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            for m in ("start", "end", "top", "bottom"):
+                getattr(box, "set_margin_" + m)(6)
+            box.append(ui.label("Name", "lx-small lx-dim"))
+            entry = Gtk.Entry(text=display_name(ws), placeholder_text="e.g. Mail", max_length=40)
+            ui.accessible_label(entry, "Workspace name")
+
+            def rename(*_):
+                pop.popdown()
+                self.run_sway(rename_cmd(ws, entry.get_text()))
+                self.reload()
+
+            entry.connect("activate", rename)
+            box.append(entry)
+            ok = Gtk.Button(label="Rename")
+            ok.connect("clicked", rename)
+            box.append(ok)
+            box.append(Gtk.Separator())
+            num = ws.get("num", -1)
+            if num >= 0 and shutil.which("luxenos-wallpaper"):
+                wp = Gtk.Button(label="Wallpaper for this workspace…")
+                wp.add_css_class("flat")
+                wp.connect("clicked", lambda *_: (pop.popdown(), self.pick_wallpaper(num)))
+                box.append(wp)
+                rm = Gtk.Button(label="Use the normal wallpaper")
+                rm.add_css_class("flat")
+                rm.connect("clicked", lambda *_: (pop.popdown(),
+                                                  ui.spawn(["luxenos-wallpaper", "unset", "--workspace", str(num)])))
+                box.append(rm)
+            close = Gtk.Button(label="Close workspace (keep its windows)")
+            close.add_css_class("flat")
+            close.connect("clicked", lambda *_: (pop.popdown(), self.close_workspace(ws)))
+            box.append(close)
+            pop.set_child(box)
+            return pop
+
+        def close_workspace(self, ws):
+            for cmd in close_cmds(ws, self.workspaces):
+                self.run_sway(cmd)
+            self.reload()
+
+        def pick_wallpaper(self, num):
+            dialog = Gtk.FileDialog(title="Wallpaper for workspace %d" % num)
+            filt = Gtk.FileFilter()
+            filt.set_name("Images")
+            for pat in ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.PNG", "*.JPG", "*.JPEG"):
+                filt.add_pattern(pat)
+            store = Gio.ListStore.new(Gtk.FileFilter)
+            store.append(filt)
+            dialog.set_filters(store)
+
+            def done(d, res):
+                try:
+                    f = d.open_finish(res)
+                except GLib.Error:
+                    return
+                if f is not None and f.get_path():
+                    ui.spawn(["luxenos-wallpaper", "set", f.get_path(), "--workspace", str(num)])
+
+            dialog.open(self, None, done)
 
         def window_menu(self, btn, w):
             pop = Gtk.Popover()
@@ -333,7 +531,9 @@ def main(argv=None):
             except swayipc.IPCError as e:
                 print("luxenos-overview: %s" % e, file=sys.stderr)
                 return 1
-            self.window = Overview(self, tree, outputs)
+            # Before the overlay covers the screen.
+            previews = capture_previews(tree)
+            self.window = Overview(self, tree, outputs, previews)
             self.window.present()
             self.window.search.grab_focus()
             return 0

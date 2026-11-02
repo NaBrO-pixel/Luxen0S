@@ -1,0 +1,47 @@
+#!/bin/sh
+# Tests of the small shell helpers that need no root: the firewall helper's
+# network check, luxenos-secureboot's report, tools/expand-package-lists and
+# auto/config's Secure Boot / release options.
+set -eu
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+C=$ROOT/config/includes.chroot
+W=$(mktemp -d)
+trap 'rm -rf "$W"' EXIT
+fail() { echo "FAIL: $*"; exit 1; }
+
+# Firewall: only private /16-/30 IPv4 networks.
+sed -n '/^valid_private_cidr()/,/^}/p' "$C/usr/libexec/luxenos/luxenos-firewall-root" > "$W/cidr.sh"
+# shellcheck disable=SC1091
+. "$W/cidr.sh"
+for ok in 192.168.1.0/24 10.0.0.0/16 172.20.5.0/24 169.254.0.0/16; do
+    valid_private_cidr "$ok" || fail "private network refused: $ok"
+done
+for bad in 8.8.8.0/24 0.0.0.0/0 192.168.1.0/8 172.32.0.0/24 '192.168.1.0/24;id' 300.1.1.1/24 '' 10.0.0.0/31; do
+    if valid_private_cidr "$bad"; then fail "accepted: '$bad'"; fi
+done
+
+# Secure Boot: always reports a mode, never fails, never writes.
+out=$(sh "$C/usr/local/bin/luxenos-secureboot" check)
+printf '%s\n' "$out" | grep -q '^@@ITEM mode \(bios\|uefi\)$' || fail "secureboot reported no mode"
+sh "$C/usr/local/bin/luxenos-secureboot" bogus >/dev/null 2>&1 && fail "secureboot accepted a bogus action"
+
+# Package lists: conditionals per release, nothing executable.
+t=$(sh "$ROOT/tools/expand-package-lists" trixie)
+f=$(sh "$ROOT/tools/expand-package-lists" forky)
+printf '%s\n' "$t" | grep -qx wlgreet || fail "trixie lacks wlgreet"
+printf '%s\n' "$f" | grep -qx wlgreet && fail "forky must not list wlgreet"
+printf '%s\n' "$f" | grep -qx papers || fail "forky lacks papers"
+printf '%s\n' "$t" | grep -q '^#' && fail "a conditional leaked into the package set"
+sh "$ROOT/tools/expand-package-lists" 'bad;name' >/dev/null 2>&1 && fail "invalid release accepted"
+
+# auto/config: Secure Boot opt-in adds the signed packages, off removes them.
+mkdir -p "$W/bin"
+printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done\n' > "$W/bin/lb"
+chmod +x "$W/bin/lb"
+cd "$ROOT"
+LUXENOS_SECURE_BOOT=1 PATH="$W/bin:$PATH" sh auto/config | grep -qx -- '--uefi-secure-boot' || fail "no --uefi-secure-boot"
+grep -qx shim-signed config/package-lists/secureboot.list.chroot || fail "secure boot list not written"
+PATH="$W/bin:$PATH" sh auto/config | grep -qx -- '--uefi-secure-boot' && fail "--uefi-secure-boot without opt-in"
+[ ! -e config/package-lists/secureboot.list.chroot ] || fail "secure boot list left behind"
+LUXENOS_SECURE_BOOT=yes PATH="$W/bin:$PATH" sh auto/config >/dev/null 2>&1 && fail "invalid LUXENOS_SECURE_BOOT accepted"
+echo "helpers: all checks passed"

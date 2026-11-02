@@ -1,0 +1,32 @@
+/* LuxenOS liquid-glass style for gtkgreet (GTK 3), the login screen used
+   where wlgreet is not available (Debian 14). Colours are the glass.conf
+   defaults: dark tint #141a26, accent #7aa2ff. */
+window {
+    background-color: transparent;
+    background-image: url("/usr/share/backgrounds/luxenos/wallpaper-blur.png");
+    background-size: cover;
+    font-family: "Inter", "Noto Sans", sans-serif;
+}
+box#body {
+    background-color: rgba(20, 26, 38, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.26);
+    border-radius: 16px;
+    padding: 28px 36px;
+    color: #e8edf7;
+}
+entry {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: #e8edf7;
+    border: 1px solid rgba(255, 255, 255, 0.20);
+    border-radius: 10px;
+    padding: 6px 10px;
+}
+entry:focus { border-color: #7aa2ff; }
+button {
+    background-image: none;
+    background-color: rgba(122, 162, 255, 0.30);
+    color: #e8edf7;
+    border: 1px solid #7aa2ff;
+    border-radius: 10px;
+}
+label { color: #e8edf7; }

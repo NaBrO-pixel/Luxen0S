@@ -27,7 +27,21 @@ chmod 0644 /usr/share/polkit-1/actions/org.luxenos.pkg.policy \
 
 # 2. 32-bit Wine ----------------------------------------------------------------
 arch=$(dpkg --print-architecture)
-if [ "$arch" = amd64 ]; then
+installed() { [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ]; }
+# Debian 13 (trixie) is the release Wine integration is built for, and a
+# missing Wine fails the build there. Debian 14 (forky, testing) has no Wine
+# in its archive at the moment (wine.list.chroot excludes it), so a forky
+# image is built without it instead of failing; luxenos-wine-open then tells
+# the user Wine is not installed.
+codename=$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release 2>/dev/null | head -n 1)
+WINE=yes
+if [ "$codename" != trixie ] && ! installed wine64; then
+    log "WARNING: Debian '$codename' has no Wine in its archive; building without Windows program support"
+    WINE=no
+fi
+if [ "$WINE" = no ]; then
+    :
+elif [ "$arch" = amd64 ]; then
     log "Enabling i386 multiarch for 32-bit Wine"
     dpkg --add-architecture i386
     apt-get update
@@ -46,14 +60,14 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 # 4. Verification -------------------------------------------------------------------
-installed() { [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ]; }
-
-installed wine64 || die "wine64 is not installed in the image"
-command -v wine >/dev/null 2>&1 || die "'wine' command missing"
-if [ "$arch" = amd64 ]; then
-    installed wine32:i386 || die "wine32:i386 is not installed in the image"
+if [ "$WINE" = yes ]; then
+    installed wine64 || die "wine64 is not installed in the image"
+    command -v wine >/dev/null 2>&1 || die "'wine' command missing"
+    if [ "$arch" = amd64 ]; then
+        installed wine32:i386 || die "wine32:i386 is not installed in the image"
+    fi
+    log "Wine present: $(wine --version 2>/dev/null || echo 'version query failed')"
 fi
-log "Wine present: $(wine --version 2>/dev/null || echo 'version query failed')"
 
 for f in /usr/local/bin/luxenos-glass /usr/local/bin/luxenos-waybar \
          /usr/local/bin/luxenos-controls /usr/local/bin/luxenos-accessibility-settings /usr/local/bin/luxenos-polkit-agent \
@@ -84,8 +98,8 @@ for prog in sway waybar wofi dunst swaylock zenity pkexec; do
     command -v "$prog" >/dev/null 2>&1 || die "required program missing from the image: $prog"
 done
 # Network tray: optional at runtime (luxenos-network falls back to nmtui) but
-# it should be there; warn loudly if network-manager-gnome did not provide it.
-command -v nm-applet >/dev/null 2>&1 || log "WARNING: nm-applet missing (network-manager-gnome); no network tray icon"
+# it should be there; warn loudly if network-manager-applet did not provide it.
+command -v nm-applet >/dev/null 2>&1 || log "WARNING: nm-applet missing (network-manager-applet); no network tray icon"
 command -v nm-connection-editor >/dev/null 2>&1 || log "WARNING: nm-connection-editor missing"
 
 # The glass generator must run cleanly for a brand-new user.

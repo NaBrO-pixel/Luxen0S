@@ -1,0 +1,119 @@
+#!/bin/sh
+# luxenos-secureboot - report Secure Boot status and check the boot chain.
+#
+# READ-ONLY. This tool never enables or disables Secure Boot, never writes EFI
+# variables, and never enrolls, deletes or replaces firmware keys (PK, KEK, db,
+# dbx) or Machine Owner Keys. Enrolling a key is always something you do
+# yourself (see README.md, "Secure Boot"); this only tells you what you have.
+#
+#   luxenos-secureboot status    firmware mode and Secure Boot state (any user)
+#   luxenos-secureboot check     full boot-chain check; reading the EFI system
+#                                partition needs root: sudo luxenos-secureboot check
+#
+# Output: one "@@ITEM key value" line per finding (read by the Hardware
+# Manager) followed by a human summary; --plain prints only the summary.
+#
+# What "signed chain" means on Debian: firmware -> shimx64.efi (signed by
+# Microsoft, package shim-signed) -> grubx64.efi (signed by Debian, package
+# grub-efi-amd64-signed) -> the kernel (Debian's linux-image-* packages built
+# from linux-signed-amd64). Each link is checked separately; LuxenOS does not
+# claim the chain is complete unless every link is found.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+plain=no
+[ "${2:-}" = --plain ] && plain=yes
+item() { [ "$plain" = yes ] || printf '@@ITEM %s %s\n' "$1" "$2"; }
+say() { printf '%s\n' "$*"; }
+
+EFI_GLOBAL=8be4df61-93ca-11d2-aa0d-e0f1d3d8e23c
+efi_byte() {   # efi_byte NAME -> 0/1 or empty
+    f=/sys/firmware/efi/efivars/$1-$EFI_GLOBAL
+    [ -r "$f" ] || return 0
+    od -An -tu1 -j4 -N1 "$f" 2>/dev/null | tr -d ' '
+}
+pkg_ok() { [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ]; }
+
+status() {
+    if [ ! -d /sys/firmware/efi ]; then
+        item mode bios
+        item secureboot unsupported
+        say "Firmware: legacy BIOS (or CSM). Secure Boot only exists with UEFI."
+        return 0
+    fi
+    item mode uefi
+    sb=$(efi_byte SecureBoot)
+    setup=$(efi_byte SetupMode)
+    if [ -z "$sb" ] && command -v mokutil >/dev/null 2>&1; then
+        case $(mokutil --sb-state 2>/dev/null) in
+            *enabled*) sb=1 ;;
+            *disabled*) sb=0 ;;
+        esac
+    fi
+    case $sb in
+        1) item secureboot enabled; say "Firmware: UEFI, Secure Boot is ENABLED." ;;
+        0) item secureboot disabled; say "Firmware: UEFI, Secure Boot is disabled." ;;
+        *) item secureboot unknown; say "Firmware: UEFI, Secure Boot state could not be read." ;;
+    esac
+    case $setup in
+        1) item setupmode yes
+           say "The firmware is in Setup Mode (no platform key): keys can be enrolled. LuxenOS never does this for you." ;;
+        0) item setupmode no ;;
+    esac
+}
+
+check() {
+    status
+    [ -d /sys/firmware/efi ] || return 0
+    links=0; found=0
+    links=$((links + 1))
+    if pkg_ok shim-signed; then item shim-package installed; found=$((found + 1))
+    else item shim-package missing; say "Missing: shim-signed (Microsoft-signed first-stage loader)."; fi
+    links=$((links + 1))
+    if pkg_ok grub-efi-amd64-signed; then item grub-package installed; found=$((found + 1))
+    else item grub-package missing; say "Missing: grub-efi-amd64-signed (Debian-signed GRUB)."; fi
+    links=$((links + 1))
+    kpkg="linux-image-$(uname -r)"
+    ksrc=$(dpkg-query -W -f='${source:Package}' "$kpkg" 2>/dev/null)
+    case $ksrc in
+        linux-signed-*) item kernel signed; found=$((found + 1)) ;;
+        '') item kernel unknown; say "The running kernel ($(uname -r)) does not come from a Debian package." ;;
+        *) item kernel unsigned; say "The running kernel comes from $ksrc, which is not a signed Debian kernel." ;;
+    esac
+    if [ "$(id -u)" -eq 0 ]; then
+        esp=$(findmnt -n -o TARGET /boot/efi 2>/dev/null)
+        if [ -n "$esp" ]; then
+            for f in shimx64.efi grubx64.efi mmx64.efi; do
+                if [ -f "$esp/EFI/debian/$f" ]; then item "esp-$f" present
+                else item "esp-$f" missing; say "Not on the EFI system partition: EFI/debian/$f"; fi
+            done
+            if command -v sbverify >/dev/null 2>&1 && [ -f "$esp/EFI/debian/grubx64.efi" ]; then
+                if sbverify --list "$esp/EFI/debian/grubx64.efi" 2>/dev/null | grep -q 'signature'; then
+                    item grub-signature present
+                else
+                    item grub-signature missing
+                fi
+            fi
+        else
+            item esp not-mounted; say "/boot/efi is not mounted; the EFI system partition was not checked."
+        fi
+        if command -v mokutil >/dev/null 2>&1; then
+            item mok-keys "$(mokutil --list-enrolled 2>/dev/null | grep -c 'Subject:')"
+        fi
+    else
+        item esp needs-root
+        say "Run 'sudo luxenos-secureboot check' to also check the EFI system partition."
+    fi
+    item chain "$found/$links"
+    if [ "$found" -eq "$links" ]; then
+        say "Signed boot components installed: $found of $links. This image's full Secure Boot chain has not been tested by LuxenOS on real firmware."
+    else
+        say "Signed boot components installed: $found of $links. With Secure Boot enabled this system may not boot; keep Secure Boot off, or install the missing packages."
+    fi
+}
+
+case ${1:-status} in
+    status) status ;;
+    check) check ;;
+    *) echo "usage: luxenos-secureboot status|check [--plain]" >&2; exit 2 ;;
+esac

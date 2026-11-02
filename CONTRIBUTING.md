@@ -14,6 +14,10 @@ editing files in one of a few well-defined places.
 | Change the *installed* system's default desktop config | `config/includes.chroot/etc/skel/.config/...` |
 | Change the *live boot/installer* kiosk session | `config/includes.chroot/etc/luxenos-installer/` and `config/hooks/live/0150-installer-kiosk.hook.chroot` |
 | Add a CLI helper for users | `config/includes.chroot/usr/local/bin/` |
+| Add a package only one Debian release has | wrap it in `#if DISTRIBUTION trixie` / `#endif` in the list (live-build syntax, no nesting, no `!` lines); check with `tools/expand-package-lists trixie` and `forky` |
+| Add a desktop app | module in `usr/lib/luxenos/python/luxenos/`, a 10-line launcher in `usr/local/bin/`, a `.desktop` file, then list it in hook 0400 (`APPS`, imports, desktop-file check), `tools/validate-release-tree` and `tools/gui-smoke-test` |
+| Add something that needs root | a small helper in `usr/libexec/luxenos/` with a fixed list of subcommands and validated arguments, a polkit action pointing at it in `org.luxenos.pkg.policy`, and a check in the validator; never make an app run as root |
+| Add a launcher plugin | `usr/share/luxenos/plugins/<id>/` (`plugin.conf` + executable, see README "Writing a launcher plugin") |
 
 ## Two boot experiences, one repo
 
@@ -52,8 +56,20 @@ Hooks in `config/hooks/live/` run in filename order:
 ```
 
 This checks required files exist, hooks/scripts are executable with valid
-POSIX `sh` syntax, and there are no leftover merge-conflict markers. It's
-the same check CI runs.
+POSIX `sh` syntax, and there are no leftover merge-conflict markers, and runs
+the Python unit tests. It's the same check CI runs. Also run:
+
+```sh
+tests/shell/test-helpers                  # firewall/Secure Boot/package-list helpers
+sudo tests/shell/test-restore-root        # restore points (scratch /etc)
+sudo tests/shell/test-snapshot-root       # Btrfs snapshots (loop device; skips without one)
+tools/gui-smoke-test                      # every app in a headless Sway (CI does this)
+```
+
+Rules the new apps follow: configuration is KEY=VALUE, parsed never sourced;
+every package operation goes through `luxenos-pkg-root` (one lock); nothing
+is deleted or flashed without a confirmation; optional hardware or programs
+degrade to "unavailable"; only describe as tested what was actually run.
 
 If you're touching a hook or the kiosk/Calamares flow, also try a real
 build — `sh -n` only catches syntax errors, not runtime behavior:

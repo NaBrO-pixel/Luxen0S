@@ -250,6 +250,18 @@ min_opacity() {
     }' 2>/dev/null
 }
 
+# theme_name VAR SUBDIR : keep VAR only if a theme of that name is installed
+# (system or user icons/ directory), else Adwaita.
+theme_name() {
+    eval "_t=\${$1:-}"
+    case $_t in ''|*[!A-Za-z0-9._-]*) eval "$1=Adwaita"; return 0 ;; esac
+    for _d in "/usr/share/$2" "${XDG_DATA_HOME:-$HOME/.local/share}/$2" "$HOME/.$2"; do
+        if [ -d "$_d/$_t" ]; then return 0; fi
+    done
+    if [ "$_t" != Adwaita ]; then warn "$1: theme '$_t' is not installed; using Adwaita"; fi
+    eval "$1=Adwaita"
+}
+
 # ------------------------------------------------------------- resolution ---
 
 resolve_config() {
@@ -273,6 +285,14 @@ resolve_config() {
     hexcolor GLASS_TINT_DARK '#141a26'
     hexcolor GLASS_TINT_LIGHT '#f4f7fc'
     if [ -z "$GLASS_FONT" ]; then GLASS_FONT=Inter; fi
+    # Icon and cursor themes (Personalization Studio): names of installed
+    # themes; anything else falls back to Adwaita. Bar position top|bottom.
+    : "${GLASS_ICON_THEME:=Adwaita}" "${GLASS_CURSOR_THEME:=Adwaita}" "${GLASS_CURSOR_SIZE:=24}"
+    : "${GLASS_BAR_POSITION:=top}"
+    theme_name GLASS_ICON_THEME icons
+    theme_name GLASS_CURSOR_THEME icons
+    enum GLASS_BAR_POSITION top top bottom
+    num GLASS_CURSOR_SIZE 16 96 24
 
     preset_values "$GLASS_PRESET"
     P_SHEEN=yes P_HIGHLIGHT=9 P_FALLBACK_OPACITY=82 P_BORDER_WIDTH=1
@@ -576,12 +596,17 @@ tooltip {
 }
 tooltip label { color: @glass_fg; padding: 2px 4px; }
 CSS
+    if [ "$GLASS_BAR_POSITION" = bottom ]; then
+        BAR_MARGIN="0 $(( GLASS_GAPS + 2 )) $GLASS_GAPS $(( GLASS_GAPS + 2 ))"
+    else
+        BAR_MARGIN="$GLASS_GAPS $(( GLASS_GAPS + 2 )) 0 $(( GLASS_GAPS + 2 ))"
+    fi
     install_file "$OUT/waybar.json" <<JSON
 {
     "layer": "top",
-    "position": "top",
+    "position": "$GLASS_BAR_POSITION",
     "height": $BAR_H,
-    "margin": "$GLASS_GAPS $(( GLASS_GAPS + 2 )) 0 $(( GLASS_GAPS + 2 ))"
+    "margin": "$BAR_MARGIN"
 }
 JSON
 }
@@ -687,6 +712,9 @@ CSS
 # $MARK by luxenos-glass. Use: luxenos-glass theme dark|light
 # (or edit this file / use nwg-look and luxenos-glass will leave it alone).
 gtk-theme-name=Adwaita
+gtk-icon-theme-name=$GLASS_ICON_THEME
+gtk-cursor-theme-name=$GLASS_CURSOR_THEME
+gtk-cursor-theme-size=$GLASS_CURSOR_SIZE
 gtk-application-prefer-dark-theme=$dark
 gtk-font-name=$GLASS_FONT $FONT_PT
 gtk-enable-animations=$anim
@@ -700,6 +728,9 @@ INI
 [Settings]
 # $MARK by luxenos-glass. Dark/light for GTK4 comes from the desktop color-scheme.
 gtk-font-name=$GLASS_FONT $FONT_PT
+gtk-icon-theme-name=$GLASS_ICON_THEME
+gtk-cursor-theme-name=$GLASS_CURSOR_THEME
+gtk-cursor-theme-size=$GLASS_CURSOR_SIZE
 gtk-enable-animations=$anim
 INI
     else
@@ -849,6 +880,12 @@ apply_gsettings() {
         || debug "could not set color-scheme (no dconf/session bus?)"
     timeout 3 gsettings set org.gnome.desktop.interface enable-animations "$anim" >/dev/null 2>&1 \
         || debug "could not set enable-animations"
+    timeout 3 gsettings set org.gnome.desktop.interface icon-theme "$GLASS_ICON_THEME" >/dev/null 2>&1 \
+        || debug "could not set icon-theme"
+    timeout 3 gsettings set org.gnome.desktop.interface cursor-theme "$GLASS_CURSOR_THEME" >/dev/null 2>&1 \
+        || debug "could not set cursor-theme"
+    timeout 3 gsettings set org.gnome.desktop.interface cursor-size "$GLASS_CURSOR_SIZE" >/dev/null 2>&1 \
+        || debug "could not set cursor-size"
 }
 
 # ------------------------------------------------------------ compositor ----
@@ -890,6 +927,7 @@ apply_sway() {
         sm "default_border pixel $GLASS_BORDER_WIDTH"
         sm "default_floating_border pixel $GLASS_BORDER_WIDTH"
     fi
+    sm "seat * xcursor_theme $GLASS_CURSOR_THEME $GLASS_CURSOR_SIZE"
     sm "gaps inner $GLASS_GAPS"
     sm "gaps outer $(( GLASS_GAPS / 2 ))"
 

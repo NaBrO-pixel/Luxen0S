@@ -1,3 +1,4 @@
 .smoke/
 gui-smoke/
 __pycache__/
+config/package-lists/secureboot.list.chroot

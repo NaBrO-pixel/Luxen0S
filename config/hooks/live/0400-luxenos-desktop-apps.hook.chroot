@@ -11,16 +11,38 @@ die() { log "ERROR: $*"; exit 1; }
 
 LIB=/usr/lib/luxenos/python
 APPS="luxenos-launcher luxenos-dock luxenos-quick-settings luxenos-overview luxenos-monitor
-      luxenos-software luxenos-restore-center luxenos-welcome luxenos-theme"
+      luxenos-software luxenos-restore-center luxenos-welcome luxenos-theme
+      luxenos-update-manager luxenos-hardware luxenos-widgets luxenos-notifications luxenos-notify-sound
+      luxenos-personalize luxenos-wallpaper luxenos-android luxenos-phone luxenos-wine-manager
+      luxenos-plugins luxenos-assistant"
 
-for f in $APPS luxenos-settings luxenos-restore; do
+for f in $APPS luxenos-settings luxenos-restore luxenos-secureboot; do
     [ -f "/usr/local/bin/$f" ] || die "missing /usr/local/bin/$f"
     chmod 0755 "/usr/local/bin/$f"
 done
-chmod 0755 /usr/libexec/luxenos/luxenos-restore-root
+for h in luxenos-restore-root luxenos-snapshot-root luxenos-android-root luxenos-firewall-root luxenos-pkg-root; do
+    [ -f "/usr/libexec/luxenos/$h" ] || die "missing /usr/libexec/luxenos/$h"
+    chmod 0755 "/usr/libexec/luxenos/$h"
+done
 [ -d "$LIB/luxenos" ] || die "missing $LIB/luxenos"
 find "$LIB" -type d -exec chmod 0755 {} +
 find "$LIB" -type f -exec chmod 0644 {} +
+
+# Shipped plugins: data 0644, their executable 0755 (plugins.py refuses
+# anything else).
+for d in /usr/share/luxenos/plugins/*/; do
+    [ -f "$d/plugin.conf" ] || continue
+    find "$d" -type f -exec chmod 0644 {} +
+    exe=$(sed -n 's/^PLUGIN_EXEC=//p' "$d/plugin.conf" | head -n 1)
+    [ -n "$exe" ] && [ -f "$d/$exe" ] || die "plugin $d has no executable"
+    chmod 0755 "$d/$exe"
+done
+
+# Daily "updates available" notification for every user (a user timer; it
+# does nothing unless notifications are on in updater.conf).
+mkdir -p /etc/systemd/user/timers.target.wants
+ln -sf /etc/systemd/user/luxenos-update-notify.timer \
+    /etc/systemd/user/timers.target.wants/luxenos-update-notify.timer
 
 log "Checking Python runtime (PyGObject, GTK 4, gtk4-layer-shell, python3-apt)"
 python3 - <<'PY' || die "a Python runtime the desktop apps need is missing"
@@ -36,7 +58,10 @@ PY
 
 log "Byte-compiling and importing the LuxenOS modules"
 python3 -m compileall -q "$LIB/luxenos" || die "LuxenOS Python modules do not compile"
-for m in config swayipc apps filesearch sysinfo quick pkg restore themes welcome; do
+for m in config swayipc apps filesearch sysinfo quick pkg restore themes welcome \
+         search plugins updates snapshots hardware wallpaper widgets notifications themeinstall \
+         personalize android phone flatpak appdata winemanager assistant updatemanager \
+         hardwaremanager androidcenter pluginmanager; do
     PYTHONPATH=$LIB python3 -c "import luxenos.$m" || die "luxenos.$m does not import"
 done
 
@@ -46,15 +71,26 @@ for t in /usr/share/luxenos/themes/*.theme; do
         || die "invalid theme pack $t"
 done
 
+log "Checking the plugins shipped with the image"
+PYTHONPATH=$LIB python3 -c 'import sys; from luxenos import plugins; bad = {k: p.problems for k, p in plugins.discover().items() if p.problems}; print(bad) if bad else None; sys.exit(1 if bad else 0)' \
+    || die "a shipped plugin is invalid"
+# AppStream data is optional at run time (the Software Center falls back to
+# package names), but the bindings should be there.
+python3 -c 'import gi; gi.require_version("AppStream", "1.0")' 2>/dev/null \
+    || log "WARNING: gir1.2-appstream-1.0 missing; the Software Center shows package names only"
+command -v bwrap >/dev/null 2>&1 || log "WARNING: bubblewrap missing; launcher plugins cannot run"
+
 if command -v desktop-file-validate >/dev/null 2>&1; then
-    for d in luxenos-software luxenos-monitor luxenos-restore-center luxenos-welcome luxenos-settings luxenos-files; do
+    for d in luxenos-software luxenos-monitor luxenos-restore-center luxenos-welcome luxenos-settings luxenos-files \
+             luxenos-updater luxenos-hardware luxenos-notifications luxenos-personalize luxenos-widgets \
+             luxenos-android luxenos-phone luxenos-wine-manager luxenos-plugins luxenos-assistant; do
         desktop-file-validate "/usr/share/applications/$d.desktop" || die "invalid $d.desktop"
     done
 fi
 python3 -c 'import xml.dom.minidom as m; m.parse("/usr/share/polkit-1/actions/org.luxenos.pkg.policy")' \
     || die "polkit policy is not well-formed XML"
 
-for prog in thunar xarchiver wlsunset; do
+for prog in thunar xarchiver wlsunset lspci lsusb mokutil pw-play; do
     command -v "$prog" >/dev/null 2>&1 || log "WARNING: $prog missing; its feature reports itself unavailable"
 done
 log "LuxenOS desktop apps verified"

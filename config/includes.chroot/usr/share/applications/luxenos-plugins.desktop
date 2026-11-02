@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Plugins
+Comment=Enable or disable LuxenOS plugins
+Exec=luxenos-plugins
+Icon=application-x-addon
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Plugins
+Categories=Settings;
+Keywords=plugin;extension;addon;

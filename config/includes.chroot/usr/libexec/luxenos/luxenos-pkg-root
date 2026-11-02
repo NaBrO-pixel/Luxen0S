@@ -16,6 +16,25 @@
 #                                           after a restore point when
 #                                           updater.conf asks for one
 #   repair                                  dpkg --configure -a; apt-get -f install
+#   download-upgrades                       apt-get --download-only upgrade
+#                                           (installed later, e.g. at shutdown
+#                                           of the day or by the next upgrade)
+#   security-upgrade                        unattended-upgrade (Debian-Security
+#                                           origins only)
+#   flatpak-update                          flatpak update, system installation
+#   firmware-update                         fwupdmgr refresh + update (no reboot)
+#   waydroid-upgrade                        newer waydroid package + Android
+#                                           image (waydroid upgrade)
+#   set-update-schedule KEY=VALUE...        update settings in updater.conf
+#                                           (whitelisted keys/values) and the
+#                                           automatic-update timer
+#
+# upgrade, security-upgrade and waydroid-upgrade first make a restore point
+# (CREATE_BACKUP_BEFORE_UPDATE) and, on Btrfs, a snapshot
+# (SNAPSHOT_BEFORE_UPDATE), as configured in /etc/luxenos/updater.conf.
+# Every subcommand runs under one lock (/run/luxenos-pkg.lock), which
+# luxenos-updater (automatic updates) takes as well: two package operations
+# never run at the same time.
 #
 # Package names are checked against Debian's naming rules (at most 50 per
 # call) and passed to apt-get after "--", never through a shell. Nothing
@@ -222,26 +241,169 @@ do_remove_pkgs() {
     status "Finished removing $*"
 }
 
-updater_wants_restore_point() {
-    v=$(sed -n 's/^[[:space:]]*CREATE_BACKUP_BEFORE_UPDATE[[:space:]]*=[[:space:]]*"\{0,1\}\([a-z]*\).*/\1/p' \
-        /etc/luxenos/updater.conf 2>/dev/null | tail -n 1)
-    [ "${v:-yes}" = yes ]
+UPDATER_CONF=/etc/luxenos/updater.conf
+
+# conf_value KEY DEFAULT : one lowercase word from updater.conf.
+conf_value() {
+    v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\{0,1\}\([a-z0-9:]*\).*/\1/p" \
+        "$UPDATER_CONF" 2>/dev/null | tail -n 1)
+    printf '%s\n' "${v:-$2}"
+}
+
+updater_wants_restore_point() { [ "$(conf_value CREATE_BACKUP_BEFORE_UPDATE yes)" = yes ]; }
+
+# before_update DESCRIPTION : restore point and Btrfs snapshot, as configured.
+# Neither failing stops the update; both are reported.
+before_update() {
+    if updater_wants_restore_point && [ -x /usr/libexec/luxenos/luxenos-restore-root ]; then
+        status "Creating a restore point before updating..."
+        if ! /usr/libexec/luxenos/luxenos-restore-root create --trigger update "$1" >>"$LOG" 2>&1; then
+            printf '@@LOG %s\n' "WARNING: the restore point could not be created; continuing with the update."
+            note "restore point before update FAILED"
+        fi
+    fi
+    if [ "$(conf_value SNAPSHOT_BEFORE_UPDATE yes)" = yes ] && [ -x /usr/libexec/luxenos/luxenos-snapshot-root ] \
+        && [ "$(findmnt -n -o FSTYPE / 2>/dev/null)" = btrfs ]; then
+        status "Taking a Btrfs snapshot before updating..."
+        if ! /usr/libexec/luxenos/luxenos-snapshot-root create --trigger update "$1" >>"$LOG" 2>&1; then
+            printf '@@LOG %s\n' "WARNING: the Btrfs snapshot could not be created; continuing with the update."
+            note "snapshot before update FAILED"
+        fi
+    fi
 }
 
 do_upgrade() {
     note "upgrade"
     refuse_protected_removal --with-new-pkgs upgrade
-    if updater_wants_restore_point && [ -x /usr/libexec/luxenos/luxenos-restore-root ]; then
-        status "Creating a restore point before updating..."
-        if ! /usr/libexec/luxenos/luxenos-restore-root create --trigger update "Before software update" \
-            >>"$LOG" 2>&1; then
-            printf '@@LOG %s\n' "WARNING: the restore point could not be created; continuing with the update."
-            note "restore point before upgrade FAILED"
-        fi
-    fi
+    before_update "Before software update"
     status "Installing updates..."
     do_apt "upgrade" --with-new-pkgs upgrade
     status "Finished installing updates"
+}
+
+do_download_upgrades() {
+    note "download-upgrades"
+    refuse_protected_removal --with-new-pkgs upgrade
+    status "Downloading updates (nothing is installed yet)..."
+    do_apt "download upgrades" --download-only --with-new-pkgs upgrade
+    status "Updates downloaded; they are installed with the next update"
+}
+
+do_security_upgrade() {
+    note "security-upgrade"
+    command -v unattended-upgrade >/dev/null 2>&1 || fail "unattended-upgrades is not installed"
+    before_update "Before security update"
+    status "Installing security updates..."
+    off=$(log_size)
+    if ! env DEBIAN_FRONTEND=noninteractive unattended-upgrade -v >>"$LOG" 2>&1; then
+        report_failure "$off"
+        note "unattended-upgrade failed"
+        exit 1
+    fi
+    note "OK: security-upgrade"
+    status "Security updates installed"
+}
+
+do_flatpak_update() {
+    note "flatpak-update"
+    command -v flatpak >/dev/null 2>&1 || fail "Flatpak is not installed"
+    status "Updating Flatpak applications (system)..."
+    off=$(log_size)
+    if ! flatpak update --system -y --noninteractive >>"$LOG" 2>&1; then
+        report_failure "$off"
+        note "flatpak update failed"
+        exit 1
+    fi
+    note "OK: flatpak-update"
+    status "Flatpak applications updated"
+}
+
+do_firmware_update() {
+    note "firmware-update"
+    command -v fwupdmgr >/dev/null 2>&1 || fail "fwupd is not installed"
+    status "Refreshing firmware metadata..."
+    # refresh exits 2 when the metadata is already current.
+    rc=0
+    fwupdmgr refresh --assume-yes >>"$LOG" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+        fail "could not download firmware metadata (network?)"
+    fi
+    status "Installing firmware updates (the computer is not restarted automatically)..."
+    off=$(log_size)
+    rc=0
+    fwupdmgr update --assume-yes --no-reboot-check >>"$LOG" 2>&1 || rc=$?
+    case $rc in
+        0) note "OK: firmware-update"; status "Firmware updated; restart to finish if asked" ;;
+        2) note "firmware-update: nothing to do"; status "No firmware updates" ;;
+        *) report_failure "$off"; note "fwupdmgr update failed (rc=$rc)"; exit 1 ;;
+    esac
+}
+
+do_waydroid_upgrade() {
+    note "waydroid-upgrade"
+    command -v waydroid >/dev/null 2>&1 || fail "Waydroid is not installed"
+    before_update "Before Android update"
+    if dpkg-query -W -f='${db:Status-Status}' waydroid 2>/dev/null | grep -qx installed; then
+        status "Updating the Waydroid package..."
+        do_apt "upgrade waydroid" install --only-upgrade -- waydroid
+    fi
+    if [ -s /var/lib/waydroid/waydroid_base.prop ]; then
+        status "Updating the Android image (waydroid upgrade)..."
+        off=$(log_size)
+        if ! waydroid upgrade >>"$LOG" 2>&1; then
+            report_failure "$off"
+            note "waydroid upgrade failed"
+            exit 1
+        fi
+    else
+        status "Android is not initialized yet; only the package was checked"
+    fi
+    note "OK: waydroid-upgrade"
+    status "Android updated"
+}
+
+# set-update-schedule KEY=VALUE... : every pair is validated before anything
+# is written; unknown keys or values change nothing.
+set_conf_key() {   # set_conf_key KEY VALUE (validated by the caller)
+    if grep -q "^[[:space:]]*$1[[:space:]]*=" "$UPDATER_CONF" 2>/dev/null; then
+        sed -i "s|^[[:space:]]*$1[[:space:]]*=.*|$1=$2|" "$UPDATER_CONF"
+    else
+        printf '%s=%s\n' "$1" "$2" >> "$UPDATER_CONF"
+    fi
+}
+
+do_set_update_schedule() {
+    [ $# -ge 1 ] || fail "usage: set-update-schedule KEY=VALUE..."
+    for kv in "$@"; do
+        k=${kv%%=*}; v=${kv#*=}
+        case $k in
+            ENABLE_AUTO_UPDATES|DOWNLOAD_ONLY|AUTO_INSTALL_SECURITY|UPDATE_PACKAGES|UPDATE_FLATPAKS|\
+            UPDATE_FIRMWARE|UPDATE_WAYDROID|UPDATES_ON_AC_ONLY|CREATE_BACKUP_BEFORE_UPDATE|\
+            ENABLE_NOTIFICATIONS|NOTIFY_AVAILABLE|NOTIFY_COMPLETE|SNAPSHOT_BEFORE_UPDATE|SNAPSHOT_AUTO_PRUNE)
+                case $v in yes|no) ;; *) fail "$k must be yes or no" ;; esac ;;
+            AUTO_UPDATE_TIME)
+                case $v in [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9]) ;; *) fail "AUTO_UPDATE_TIME must be HH:MM" ;; esac ;;
+            SNAPSHOT_RETENTION|BACKUP_RETENTION)
+                case $v in [1-9]|[1-9][0-9]) ;; *) fail "$k must be 1-99" ;; esac ;;
+            *) fail "setting not allowed: $k" ;;
+        esac
+    done
+    [ -f "$UPDATER_CONF" ] || fail "$UPDATER_CONF is missing"
+    for kv in "$@"; do set_conf_key "${kv%%=*}" "${kv#*=}"; done
+    note "set-update-schedule $*"
+    t=$(conf_value AUTO_UPDATE_TIME 02:00)
+    dropin=/etc/systemd/system/luxenos-auto-update.timer.d/luxenos-time.conf
+    mkdir -p "$(dirname "$dropin")"
+    printf '# Written by luxenos-pkg-root (Update Manager) from AUTO_UPDATE_TIME.\n[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' \
+        "$t" > "$dropin"
+    systemctl daemon-reload 2>/dev/null || true
+    if [ "$(conf_value ENABLE_AUTO_UPDATES no)" = yes ]; then
+        systemctl enable --now luxenos-auto-update.timer >/dev/null 2>&1 \
+            || printf '@@LOG %s\n' "WARNING: could not enable luxenos-auto-update.timer"
+    else
+        systemctl disable --now luxenos-auto-update.timer >/dev/null 2>&1 || true
+    fi
+    status "Update settings saved"
 }
 
 do_repair() {
@@ -301,6 +463,20 @@ case ${1:-} in
     repair)
         [ $# -eq 1 ] || fail "usage: repair"
         do_repair
+        ;;
+    download-upgrades|security-upgrade|flatpak-update|firmware-update|waydroid-upgrade)
+        [ $# -eq 1 ] || fail "usage: $1"
+        case $1 in
+            download-upgrades) do_download_upgrades ;;
+            security-upgrade) do_security_upgrade ;;
+            flatpak-update) do_flatpak_update ;;
+            firmware-update) do_firmware_update ;;
+            waydroid-upgrade) do_waydroid_upgrade ;;
+        esac
+        ;;
+    set-update-schedule)
+        shift
+        do_set_update_schedule "$@"
         ;;
     *)
         fail "unknown action"

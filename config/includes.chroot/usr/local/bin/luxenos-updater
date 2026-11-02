@@ -36,6 +36,8 @@ AUTO_INSTALL_SECURITY=yes
 CREATE_BACKUP_BEFORE_UPDATE=yes
 BACKUP_RETENTION=5
 UPDATES_ON_AC_ONLY=yes
+DOWNLOAD_ONLY=no
+SNAPSHOT_BEFORE_UPDATE=yes
 
 load_updater_conf() {
     [ -r "$LUXENOS_UPDATER_CONF" ] || return 0
@@ -50,7 +52,8 @@ load_updater_conf() {
         val=${val%\"}
         case $key in
             UPDATE_PACKAGES|UPDATE_WAYDROID|UPDATE_FLATPAKS|UPDATE_FIRMWARE|\
-            AUTO_INSTALL_SECURITY|CREATE_BACKUP_BEFORE_UPDATE|UPDATES_ON_AC_ONLY)
+            AUTO_INSTALL_SECURITY|CREATE_BACKUP_BEFORE_UPDATE|UPDATES_ON_AC_ONLY|\
+            DOWNLOAD_ONLY|SNAPSHOT_BEFORE_UPDATE)
                 case $val in yes|no) printf -v "$key" '%s' "$val" ;; esac ;;
             BACKUP_RETENTION)
                 case $val in ''|*[!0-9]*|0) ;; *) BACKUP_RETENTION=$val ;; esac ;;
@@ -159,6 +162,29 @@ check_prerequisites() {
 # ============================================================================
 # Backup Management
 # ============================================================================
+
+# One package operation at a time: the Update Manager, Software Center and
+# .deb installer (all through luxenos-pkg-root) hold the same lock.
+PKG_LOCK=/run/luxenos-pkg.lock
+take_pkg_lock() {
+    exec 9>"$PKG_LOCK"
+    if ! flock -w 600 9; then
+        log_error "Another package operation is still running (Update Manager, Software Center or apt); try again later"
+        exit 1
+    fi
+}
+
+# Btrfs snapshot before updating (no-op on other filesystems).
+create_snapshot() {
+    [ "$SNAPSHOT_BEFORE_UPDATE" = yes ] || return 0
+    [ "$(findmnt -n -o FSTYPE / 2>/dev/null)" = btrfs ] || return 0
+    [ -x /usr/libexec/luxenos/luxenos-snapshot-root ] || return 0
+    if run_logged /usr/libexec/luxenos/luxenos-snapshot-root create --trigger update "Before automatic update"; then
+        log_info "✓ Btrfs snapshot created"
+    else
+        log_warn "Could not create a Btrfs snapshot; continuing"
+    fi
+}
 
 create_backup() {
     log_section "Creating Restore Point"
@@ -599,6 +625,9 @@ EOF
     done
     
     check_prerequisites
+    if [ "$CHECK_ONLY" != 1 ]; then
+        take_pkg_lock
+    fi
     
     # Log startup
     log_info "LuxenOS Updater started ($(date))"
@@ -609,10 +638,22 @@ EOF
             log_warn "Running on battery and UPDATES_ON_AC_ONLY=yes; skipping automatic update"
             exit 0
         fi
+        update_package_cache
+        if [ "$DOWNLOAD_ONLY" = yes ]; then
+            # Download now, install later (Update Manager or the next run
+            # with DOWNLOAD_ONLY=no); nothing on the system changes.
+            log_section "Downloading updates (DOWNLOAD_ONLY=yes)"
+            if DEBIAN_FRONTEND=noninteractive run_logged apt-get --download-only --with-new-pkgs upgrade -y -qq; then
+                log_info "✓ Updates downloaded, not installed"
+            else
+                log_error "Downloading updates failed"
+            fi
+            exit 0
+        fi
         if [ "$CREATE_BACKUP_BEFORE_UPDATE" = yes ]; then
             create_backup
         fi
-        update_package_cache
+        create_snapshot
         if [ "$UPDATE_PACKAGES" = yes ]; then
             perform_upgrade
         elif [ "$AUTO_INSTALL_SECURITY" = yes ]; then

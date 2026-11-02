@@ -1,0 +1,45 @@
+#!/bin/sh
+# End-to-end test of luxenos-snapshot-root on a scratch Btrfs filesystem in a
+# loop file. Needs root, btrfs-progs and loop devices; skipped otherwise (CI
+# containers often have no loop devices). Never touches the real system.
+set -eu
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+H="$ROOT/config/includes.chroot/usr/libexec/luxenos/luxenos-snapshot-root"
+fail() { echo "FAIL: $*"; exit 1; }
+
+# Without root only "status" works, and it must not fail on any filesystem.
+if [ "$(id -u)" -ne 0 ]; then
+    bash "$H" status | grep -q '^@@ITEM fstype ' || fail "status printed no filesystem type"
+    bash "$H" create x >/dev/null 2>&1 && fail "create worked without root"
+    echo "skip: snapshot end-to-end test needs root"; exit 0
+fi
+command -v mkfs.btrfs >/dev/null 2>&1 || { echo "skip: btrfs-progs missing"; exit 0; }
+W=$(mktemp -d)
+cleanup() { umount "$W/mnt" 2>/dev/null || true; rm -rf "$W"; }
+trap cleanup EXIT
+truncate -s 300M "$W/disk.img"
+mkfs.btrfs -q "$W/disk.img" || { echo "skip: mkfs.btrfs failed"; exit 0; }
+mkdir "$W/mnt"
+mount -o loop "$W/disk.img" "$W/mnt" 2>/dev/null || { echo "skip: no loop devices"; exit 0; }
+echo hello > "$W/mnt/file"
+export LUXENOS_SNAPSHOT_ROOT="$W/mnt"
+
+# Small filesystem: the 1 GB free-space guard must refuse.
+bash "$H" create "too small" >/dev/null 2>&1 && fail "created a snapshot with < 1 GB free"
+umount "$W/mnt"
+truncate -s 1300M "$W/disk.img"
+mount -o loop "$W/disk.img" "$W/mnt"
+btrfs filesystem resize max "$W/mnt" >/dev/null
+
+out=$(bash "$H" create --trigger update "Test snapshot") || fail "create: $out"
+id=$(printf '%s\n' "$out" | sed -n 's/^@@CREATED //p')
+[ -n "$id" ] || fail "no id"
+[ "$(cat "$W/mnt/.snapshots/$id/file")" = hello ] || fail "snapshot lacks the file"
+btrfs property get "$W/mnt/.snapshots/$id" ro | grep -q true || fail "snapshot is not read-only"
+grep -qx 'TRIGGER=update' "$W/mnt/.snapshots/$id.info" || fail "info.conf"
+bash "$H" list | grep -q "$id" || fail "list misses $id"
+bash "$H" delete "../../etc" >/dev/null 2>&1 && fail "path traversal accepted"
+bash "$H" delete "$id" >/dev/null || fail "delete"
+[ ! -e "$W/mnt/.snapshots/$id" ] || fail "snapshot still there"
+bash "$H" bogus >/dev/null 2>&1 && fail "unknown action accepted"
+echo "snapshot-root: all checks passed"

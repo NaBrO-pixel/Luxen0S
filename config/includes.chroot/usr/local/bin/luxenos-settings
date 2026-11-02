@@ -5,6 +5,9 @@
 # are set; Appearance here only picks theme packs, colours and light/dark,
 # which luxenos-glass applies on top of the same per-user glass.conf.
 #
+# Personalization (luxenos-personalize) is the full graphical appearance
+# editor; it writes the same per-user glass.conf through luxenos-glass.
+#
 # Usage: luxenos-settings [appearance|accessibility|dock]
 set -u
 
@@ -115,25 +118,41 @@ esac
 while :; do
     choice=$(Z --list --title "$TITLE" --width 560 --height 520 \
         --text "Choose a settings page." --column Page --column Description \
+        "Personalization" "Theme, Liquid Glass, wallpapers, fonts, icons, panel" \
         "Appearance" "Theme packs, light/dark, accent colour" \
         "Accessibility" "Liquid Glass intensity, reduce motion" \
         "Dock" "Position, icon size, auto-hide" \
+        "Desktop widgets" "Weather, clock, CPU, music and more" \
+        "Notifications" "History, Do Not Disturb, per-app settings, sounds" \
         "Network" "Wi-Fi, Ethernet, VPN" \
         "Sound" "Output and input devices, volume" \
         "Software and updates" "Install, update and remove software" \
         "Automatic updates" "When and what is updated automatically" \
-        "Restore points" "Configuration backups and restore" \
+        "Restore points" "Configuration backups, Btrfs snapshots" \
+        "Hardware" "Devices, drivers, firmware, Secure Boot" \
+        "Android" "Waydroid: start, apps, display, troubleshooting" \
+        "Phone" "Pair your phone (KDE Connect)" \
+        "Windows programs" "Wine prefixes and shortcuts" \
+        "Plugins" "Launcher plugins" \
         "Welcome guide" "Keyboard, time zone and the first-steps tour" \
         "System monitor" "Processes, memory, disks, battery") || exit 0
     case $choice in
+        Personalization) start luxenos-personalize ;;
         Appearance) appearance ;;
         Accessibility) sh /usr/local/bin/luxenos-accessibility-settings ;;
         Dock) dock ;;
+        "Desktop widgets") start luxenos-widgets --settings ;;
+        Notifications) start luxenos-notifications ;;
         Network) start luxenos-network ;;
         Sound) start pavucontrol-qt ;;
         "Software and updates") start luxenos-software ;;
-        "Automatic updates") start foot -e sudo luxenos-update-settings configure ;;
+        "Automatic updates") start luxenos-update-manager ;;
         "Restore points") start luxenos-restore-center ;;
+        Hardware) start luxenos-hardware ;;
+        Android) start luxenos-android ;;
+        Phone) start luxenos-phone ;;
+        "Windows programs") start luxenos-wine-manager ;;
+        Plugins) start luxenos-plugins ;;
         "Welcome guide") start luxenos-welcome ;;
         "System monitor") start luxenos-monitor ;;
         *) exit 0 ;;

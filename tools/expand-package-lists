@@ -1,0 +1,54 @@
+#!/bin/sh
+# expand-package-lists DISTRIBUTION [ARCHITECTURE]
+#
+# Print the package names config/package-lists/*.list.chroot install for one
+# Debian release, one per line, sorted and unique. Evaluates the same
+# conditionals live-build does (functions/packagelists.sh):
+#
+#   #if DISTRIBUTION trixie forky     included when any value matches
+#   #nif DISTRIBUTION forky           included when no value matches
+#   #endif
+#
+# Only DISTRIBUTION and ARCHITECTURES are supported (the only ones LuxenOS
+# uses); nesting is rejected, as live-build rejects it. Lines starting with
+# "!" (live-build runs them as commands) are refused: LuxenOS lists are data.
+#
+# Used by CI (package-lists-resolve, per release) and tools/validate-release-tree.
+
+set -eu
+
+dist=${1:-}
+arch=${2:-amd64}
+case $dist in
+    ''|*[!a-z]*) echo "usage: $0 DISTRIBUTION [ARCHITECTURE]" >&2; exit 2 ;;
+esac
+dir=$(cd "$(dirname "$0")/.." && pwd)/config/package-lists
+
+for f in "$dir"/*.list.chroot; do
+    awk -v dist="$dist" -v arch="$arch" -v file="$f" '
+        function fail(msg) { printf "%s:%d: %s\n", file, NR, msg > "/dev/stderr"; bad = 1; exit 1 }
+        function matches(var, n,   i, want) {
+            want = (var == "DISTRIBUTION") ? dist : (var == "ARCHITECTURES") ? arch : ""
+            if (want == "") fail("unsupported conditional variable " var)
+            for (i = 3; i <= n; i++) if ($i == want) return 1
+            return 0
+        }
+        BEGIN { nested = 0; enabled = 1 }
+        /^!/ { fail("command lines (!) are not allowed in LuxenOS package lists") }
+        /^#if / {
+            if (nested) fail("nested conditionals are not supported")
+            nested = 1; enabled = matches($2, NF); next
+        }
+        /^#nif / {
+            if (nested) fail("nested conditionals are not supported")
+            nested = 1; enabled = !matches($2, NF); next
+        }
+        /^#endif/ { nested = 0; enabled = 1; next }
+        {
+            sub(/#.*/, "")
+            if (!enabled) next
+            for (i = 1; i <= NF; i++) print $i
+        }
+        END { if (!bad && nested) { printf "%s: unterminated #if\n", file > "/dev/stderr"; exit 1 } }
+    ' "$f"
+done | sort -u

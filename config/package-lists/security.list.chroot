@@ -1,7 +1,10 @@
 # Hardening for the installed system.
 apparmor
 apparmor-profiles
+# apparmor-profiles-extra was removed from Debian after trixie.
+#if DISTRIBUTION trixie
 apparmor-profiles-extra
+#endif
 apparmor-utils
 ufw
 tlp

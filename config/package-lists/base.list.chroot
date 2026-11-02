@@ -4,7 +4,11 @@ udev
 systemd
 sudo
 network-manager
-network-manager-gnome
+# nm-applet (tray) and nm-connection-editor. Since Debian 13 these are two
+# packages; network-manager-gnome is only a transitional package in trixie and
+# no longer exists in forky (Debian 14).
+network-manager-applet
+nm-connection-editor
 wireless-tools
 iw
 firmware-linux

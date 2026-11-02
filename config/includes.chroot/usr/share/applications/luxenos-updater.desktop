@@ -1,9 +1,11 @@
 [Desktop Entry]
-Name=LuxenOS Updater
-Comment=Check for and install system updates
-Exec=foot -e sudo luxenos-updater
-Icon=system-software-update
 Type=Application
-Categories=System;
-Keywords=update;upgrade;maintenance;
+Name=Update Manager
+Comment=Install Debian, security, Flatpak, firmware and Android updates
+Exec=luxenos-update-manager
+Icon=system-software-update
 Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.UpdateManager
+Categories=System;
+Keywords=update;upgrade;security;firmware;flatpak;schedule;

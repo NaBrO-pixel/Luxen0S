@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Android
+Comment=Start Android, install APKs, manage Android apps
+Exec=luxenos-android
+Icon=android
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Android
+Categories=System;Emulator;
+Keywords=android;waydroid;apk;apps;

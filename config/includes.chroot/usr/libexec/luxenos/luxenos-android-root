@@ -1,0 +1,95 @@
+#!/bin/sh
+# luxenos-android-root - the privileged half of the Android Integration Center
+# (luxenos-android). Started through pkexec, polkit action org.luxenos.android.
+# Everything an ordinary user can do with Waydroid (start/stop the session,
+# install APKs, launch apps, properties) runs as the user, not here.
+#
+# Subcommands (everything else is rejected):
+#   container-start | container-stop | container-restart
+#                       the waydroid-container system service
+#   init GAPPS|VANILLA  first-time initialization (downloads the Android image);
+#                       refused when Android is already initialized
+#   reinit GAPPS|VANILLA  download the Android image again (waydroid init -f);
+#                       the apps and data in your home folder are kept
+#   retry-first-boot    restart waydroid-first-init.service after a failure
+#   log                 the last lines of the Waydroid and container logs
+#
+# Output: "@@STATUS text" / "@@LOG text" lines plus Waydroid's own output.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LOG=/var/log/luxenos/android.log
+BASE_PROP=/var/lib/waydroid/waydroid_base.prop
+
+status() { printf '@@STATUS %s\n' "$*"; }
+fail() { printf '@@LOG ERROR: %s\n' "$*"; note "FAILED: $*"; exit 1; }
+note() {
+    printf '%s uid=%s %s\n' "$(date -Is)" "${PKEXEC_UID:-?}" "$*" 2>/dev/null >> "$LOG"
+    logger -t luxenos-android -- "$*" 2>/dev/null || true
+}
+
+[ "$(id -u)" -eq 0 ] || { echo "@@LOG ERROR: must run as root (through pkexec)"; exit 1; }
+mkdir -p "$(dirname "$LOG")"
+command -v waydroid >/dev/null 2>&1 || fail "Waydroid is not installed"
+grep -qw 'boot=live' /proc/cmdline 2>/dev/null && fail "Android is not available on the live system"
+
+image_type() {
+    case ${1:-} in GAPPS|VANILLA) ;; *) fail "image type must be GAPPS or VANILLA" ;; esac
+}
+
+service() {   # service ACTION
+    note "container $1"
+    status "Android container: $1…"
+    if ! systemctl "$1" waydroid-container.service 2>&1; then
+        fail "systemctl $1 waydroid-container.service failed (see: journalctl -u waydroid-container)"
+    fi
+    status "Android container: $(systemctl is-active waydroid-container.service 2>/dev/null)"
+}
+
+do_init() {   # do_init TYPE [-f]
+    image_type "$1"
+    note "init $1 ${2:-}"
+    status "Downloading and preparing Android ($1). This needs an internet connection and several minutes…"
+    # waydroid prints download progress; pass it on line by line.
+    if ! waydroid init -s "$1" ${2:+"$2"} 2>&1; then
+        fail "waydroid init failed; check the network connection and try again"
+    fi
+    [ -s "$BASE_PROP" ] || fail "initialization finished without creating $BASE_PROP"
+    systemctl enable --now waydroid-container.service >/dev/null 2>&1 || true
+    status "Android is ready"
+}
+
+case ${1:-} in
+    container-start) [ $# -eq 1 ] || fail "usage"; service start ;;
+    container-stop) [ $# -eq 1 ] || fail "usage"; service stop ;;
+    container-restart) [ $# -eq 1 ] || fail "usage"; service restart ;;
+    init)
+        [ $# -eq 2 ] || fail "usage: init GAPPS|VANILLA"
+        [ ! -s "$BASE_PROP" ] || fail "Android is already initialized (use reinit to download the image again)"
+        do_init "$2"
+        ;;
+    reinit)
+        [ $# -eq 2 ] || fail "usage: reinit GAPPS|VANILLA"
+        do_init "$2" -f
+        ;;
+    retry-first-boot)
+        [ $# -eq 1 ] || fail "usage"
+        note "retry first-boot init"
+        status "Retrying the first-boot Android setup…"
+        systemctl reset-failed waydroid-first-init.service 2>/dev/null
+        systemctl restart waydroid-first-init.service 2>&1 \
+            || fail "the first-boot setup failed again (journalctl -u waydroid-first-init.service)"
+        status "First-boot setup finished"
+        ;;
+    log)
+        [ $# -eq 1 ] || fail "usage"
+        echo "== /var/lib/waydroid/waydroid.log"
+        tail -n 120 /var/lib/waydroid/waydroid.log 2>/dev/null || echo "(no Waydroid log yet)"
+        echo "== journalctl -u waydroid-container"
+        journalctl -u waydroid-container.service -n 60 --no-pager 2>/dev/null
+        echo "== journalctl -u waydroid-first-init"
+        journalctl -u waydroid-first-init.service -n 40 --no-pager 2>/dev/null
+        ;;
+    *) fail "unknown action" ;;
+esac

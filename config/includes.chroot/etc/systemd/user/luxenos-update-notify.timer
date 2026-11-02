@@ -1,0 +1,10 @@
+[Unit]
+Description=LuxenOS: daily check for available software updates
+
+[Timer]
+OnStartupSec=20min
+OnUnitActiveSec=1d
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

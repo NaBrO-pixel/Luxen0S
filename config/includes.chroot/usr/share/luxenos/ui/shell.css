@@ -177,3 +177,11 @@ window.lx-layer .lx-window-tile.focused { background-color: @glass_accent_soft; 
     border: 1px solid alpha(currentColor, 0.3);
     font-family: monospace;
 }
+
+/* Desktop widgets (luxenos-widgets) */
+.lx-widget { padding: 14px 16px; min-width: 200px; }
+.lx-widget levelbar block.filled { background-color: @glass_accent; }
+.lx-calendar { background: transparent; color: @glass_fg; border: none; }
+
+/* Workspace overview window previews */
+.lx-preview { border-radius: 6px; border: 1px solid @glass_border; }

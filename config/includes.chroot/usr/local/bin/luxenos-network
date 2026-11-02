@@ -8,6 +8,6 @@ if command -v nmtui >/dev/null 2>&1 && command -v foot >/dev/null 2>&1; then
 fi
 if command -v notify-send >/dev/null 2>&1; then
     notify-send -a LuxenOS "Network settings unavailable" \
-        "Install network-manager-gnome (nm-connection-editor) or use nmtui."
+        "Install nm-connection-editor or use nmtui."
 fi
 exit 1

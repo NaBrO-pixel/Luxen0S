@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""LuxenOS wallpaper engine (set, slideshow, per-monitor, per-workspace).
+
+Implementation: /usr/lib/luxenos/python/luxenos/wallpaper.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("LUXENOS_PYLIB", "/usr/lib/luxenos/python"))
+from luxenos.wallpaper import main  # noqa: E402
+
+sys.exit(main())

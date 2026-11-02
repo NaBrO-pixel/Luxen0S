@@ -347,8 +347,8 @@ def main(argv=None):
             b.connect("clicked", lambda *_: ui.spawn(["luxenos-software", "--updates"]))
             box.append(b)
             box.append(ui.label("Opens the Software Center on its Updates page; refresh the catalogue there "
-                                "first. Updates are also installed automatically at night (see "
-                                "luxenos-update-settings).", "lx-dim lx-small", wrap=True))
+                                "first. Automatic updates can be switched on in the Update Manager "
+                                "(Settings page).", "lx-dim lx-small", wrap=True))
             box.append(ui.label("Suggested apps", "lx-heading"))
             self.picks = []
             grid = Gtk.Grid(column_spacing=12, row_spacing=4)

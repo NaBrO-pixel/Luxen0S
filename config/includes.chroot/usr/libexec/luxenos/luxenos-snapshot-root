@@ -1,0 +1,316 @@
+#!/bin/bash
+# luxenos-snapshot-root - Btrfs system snapshots for LuxenOS (backend of the
+# Restore Center's "Snapshots" page, luxenos-pkg-root and luxenos-updater).
+#
+# ONLY ON BTRFS. Every subcommand first checks that / is a Btrfs subvolume and
+# refuses otherwise; ext4 installs keep using restore points
+# (luxenos-restore-root), which this does not replace.
+#
+# What a snapshot is: a read-only Btrfs snapshot of the root subvolume, kept in
+# the subvolume /.snapshots (so it is never part of the next snapshot). It
+# holds everything on the root subvolume at that moment: programs, /etc, and -
+# unless they are separate subvolumes or partitions - /var/log and /home.
+# A snapshot is NOT a backup: it lives on the same disk.
+#
+# Subcommands (run as root; the Restore Center uses pkexec, polkit action
+# org.luxenos.snapshot, administrator password each time):
+#   status                         filesystem, layout, rollback support
+#   create [--trigger manual|update] DESCRIPTION
+#   list
+#   delete ID                      (no prompt: the caller confirmed)
+#   prune                          delete automatic snapshots beyond
+#                                  SNAPSHOT_RETENTION (caller confirmed, or
+#                                  SNAPSHOT_AUTO_PRUNE=yes in updater.conf)
+#   prune-preview                  print what prune would delete
+#   rollback ID                    make ID the system for the next boot
+#
+# Rollback (only where supported, see rollback_check): the root subvolume
+# named in /etc/fstab (e.g. "@") is renamed to "@.before-rollback-DATE" and a
+# writable copy of the snapshot takes its name, so the next boot starts the
+# snapshot. Nothing is deleted: the previous system stays on disk under the
+# new name until you remove it. Refused when /home is not separate (a rollback
+# would also roll back your files), when /boot is a separate filesystem
+# (kernels would not match the restored modules), when fstab does not mount
+# the root by subvol=NAME, or on the live system.
+#
+# Snapshot layout: /.snapshots/luxenos-snap-YYYYmmdd-HHMMSS (read-only
+# subvolume) + /.snapshots/luxenos-snap-YYYYmmdd-HHMMSS.info (KEY=VALUE,
+# world-readable, FORMAT=1).
+#
+# Output for the GUI: "@@STATUS text", "@@ITEM key value", "@@CREATED id",
+# "@@LOG text"; everything else is for people.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 022
+
+ROOT=/
+# Tests only: operate on another mounted Btrfs instead of /, honoured only for
+# a root caller that did not come through pkexec.
+if [ -z "${PKEXEC_UID:-}" ] && [ -n "${LUXENOS_SNAPSHOT_ROOT:-}" ]; then
+    ROOT=$LUXENOS_SNAPSHOT_ROOT
+fi
+FSTAB=${LUXENOS_SNAPSHOT_FSTAB:-/etc/fstab}
+[ -z "${PKEXEC_UID:-}" ] || FSTAB=/etc/fstab
+SNAPDIR=${ROOT%/}/.snapshots
+UPDATER_CONF=/etc/luxenos/updater.conf
+LOG=/var/log/luxenos/snapshot.log
+LOCK=/run/luxenos-snapshot.lock
+ID_RE='^luxenos-snap-[0-9]{8}-[0-9]{6}(-[0-9]+)?$'
+
+[ "$(id -u)" -ne 0 ] || mkdir -p "$(dirname "$LOG")" 2>/dev/null
+note() {
+    printf '%s uid=%s %s\n' "$(date -Is)" "${PKEXEC_UID:-${SUDO_UID:-0}}" "$*" 2>/dev/null >> "$LOG"
+    logger -t luxenos-snapshot -- "$*" 2>/dev/null || true
+}
+status() { printf '@@STATUS %s\n' "$*"; }
+item() { printf '@@ITEM %s %s\n' "$1" "$2"; }
+fail() {
+    printf '@@LOG ERROR: %s\n' "$*"
+    note "FAILED: $*"
+    exit 1
+}
+unsupported() {   # exit 3: not an error, the feature does not apply here
+    printf '@@LOG UNSUPPORTED: %s\n' "$*"
+    exit 3
+}
+
+# Everything except "status" (read-only: fstab, findmnt) needs root.
+if [ "$(id -u)" -ne 0 ] && [ "${1:-}" != status ]; then
+    fail "must run as root"
+fi
+is_live() { grep -qw 'boot=live' /proc/cmdline 2>/dev/null; }
+
+conf_value() {
+    v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\{0,1\}\([a-z0-9]*\).*/\1/p" \
+        "$UPDATER_CONF" 2>/dev/null | tail -n 1)
+    printf '%s\n' "${v:-$2}"
+}
+
+sanitize() { printf '%s' "$1" | tr -cd '[:print:]' | tr -d '\\' | cut -c1-120; }
+
+require_btrfs() {
+    fstype=$(findmnt -n -o FSTYPE --target "$ROOT" 2>/dev/null)
+    [ "$fstype" = btrfs ] || unsupported "the system disk uses ${fstype:-an unknown filesystem}, not Btrfs; snapshots are not available (restore points still are)"
+    command -v btrfs >/dev/null 2>&1 || unsupported "btrfs-progs is not installed"
+}
+
+lock() {
+    exec 9>"$LOCK"
+    flock -w 120 9 || fail "another snapshot operation is still running"
+}
+
+ensure_snapdir() {
+    if [ -e "$SNAPDIR" ]; then
+        btrfs subvolume show "$SNAPDIR" >/dev/null 2>&1 \
+            || fail "$SNAPDIR exists but is not a Btrfs subvolume; move it away first"
+    else
+        btrfs subvolume create "$SNAPDIR" >/dev/null || fail "cannot create the subvolume $SNAPDIR"
+        chmod 0755 "$SNAPDIR"
+        note "created $SNAPDIR"
+    fi
+}
+
+valid_id() { [[ $1 =~ $ID_RE ]] && [ -d "$SNAPDIR/$1" ] && [ ! -L "$SNAPDIR/$1" ]; }
+
+ids() {   # newest first
+    [ -d "$SNAPDIR" ] || return 0
+    find "$SNAPDIR" -mindepth 1 -maxdepth 1 -type d -name 'luxenos-snap-*' -printf '%f\n' \
+        | while IFS= read -r i; do [[ $i =~ $ID_RE ]] && printf '%s\n' "$i"; done | sort -r
+}
+
+info_value() { sed -n "s/^$2=//p" "$SNAPDIR/$1.info" 2>/dev/null | head -n 1; }
+
+# --- layout / rollback support ---------------------------------------------------
+
+# fstab_root_subvol : the subvol= option of the / entry in fstab ("" if none).
+fstab_root_subvol() {
+    awk '$1 !~ /^#/ && $2 == "/" { n = split($4, o, ","); for (i = 1; i <= n; i++)
+        if (o[i] ~ /^subvol=/) { sub(/^subvol=/, "", o[i]); print o[i]; exit } }' "$FSTAB" 2>/dev/null
+}
+
+# running_root_subvol : the subvolume / is mounted from, e.g. "/@".
+running_root_subvol() {
+    findmnt -n -o FSROOT --target "$ROOT" 2>/dev/null
+}
+
+separate_mount() {   # separate_mount PATH : true if PATH is its own mount
+    [ "$(findmnt -n -o TARGET --target "$1" 2>/dev/null)" = "$1" ]
+}
+
+# rollback_check : prints "yes" or "no REASON" (one line).
+rollback_check() {
+    if is_live; then echo "no this is the live system"; return; fi
+    sv=$(fstab_root_subvol)
+    sv=${sv#/}
+    if [ -z "$sv" ]; then
+        echo "no /etc/fstab does not mount the system by subvolume name (subvol=), so the next boot cannot be redirected to a snapshot"
+        return
+    fi
+    case $sv in */*|*[!A-Za-z0-9@._-]*)
+        echo "no the system subvolume '$sv' is nested or has an unusual name; only top-level subvolumes are supported"; return ;;
+    esac
+    run=$(running_root_subvol)
+    if [ "${run#/}" != "$sv" ]; then
+        echo "no the running system is not the subvolume fstab names ($run vs /$sv); restart first"
+        return
+    fi
+    if separate_mount /boot; then
+        echo "no /boot is a separate filesystem: a rolled-back system would boot kernels that do not match its modules"
+        return
+    fi
+    if ! separate_mount /home; then
+        echo "no /home is part of the system subvolume, so a rollback would also roll back your personal files"
+        return
+    fi
+    echo yes
+}
+
+cmd_status() {
+    fstype=$(findmnt -n -o FSTYPE --target "$ROOT" 2>/dev/null)
+    item fstype "${fstype:-unknown}"
+    [ "$fstype" = btrfs ] || { item supported no; return 0; }
+    item supported yes
+    item subvolume "$(running_root_subvol)"
+    item fstab_subvol "$(fstab_root_subvol)"
+    if separate_mount /home; then item home separate; else item home "in the system subvolume"; fi
+    if separate_mount /var/log; then item logs separate; else item logs "in the system subvolume"; fi
+    item rollback "$(rollback_check)"
+    item count "$(ids | grep -c .)"
+    item retention "$(conf_value SNAPSHOT_RETENTION 10)"
+    avail=$(df -Pk "$ROOT" | awk 'NR==2 {print $4}')
+    item free_kib "${avail:-0}"
+}
+
+# --- create / list / delete --------------------------------------------------------
+
+cmd_create() {
+    trigger=manual
+    if [ "${1:-}" = --trigger ]; then
+        case ${2:-} in manual|update|rollback) trigger=$2 ;; *) fail "bad trigger" ;; esac
+        shift 2
+    fi
+    [ $# -eq 1 ] || fail "usage: create [--trigger manual|update] DESCRIPTION"
+    require_btrfs
+    is_live && fail "snapshots are not available on the live system"
+    desc=$(sanitize "$1")
+    [ -n "$desc" ] || desc="Snapshot"
+    avail=$(df -Pk "$ROOT" | awk 'NR==2 {print $4}')
+    # Snapshots share data, but updates write new data next to them.
+    [ "${avail:-0}" -gt 1048576 ] || fail "less than 1 GB free on the disk; free some space or delete old snapshots"
+    ensure_snapdir
+    id="luxenos-snap-$(date +%Y%m%d-%H%M%S)"
+    n=1; base=$id
+    while [ -e "$SNAPDIR/$id" ]; do id="$base-$n"; n=$((n + 1)); done
+    status "Taking a snapshot of the system…"
+    btrfs subvolume snapshot -r "$ROOT" "$SNAPDIR/$id" >/dev/null 2>&1 || fail "btrfs could not take the snapshot"
+    {
+        echo "FORMAT=1"
+        echo "CREATED=$(date +%s)"
+        echo "DESCRIPTION=$desc"
+        echo "TRIGGER=$trigger"
+        echo "LUXENOS_VERSION=$(sanitize "$(cat /etc/luxenos-version 2>/dev/null || echo unknown)")"
+        echo "KERNEL=$(uname -r)"
+        echo "SUBVOLUME=$(running_root_subvol)"
+    } > "$SNAPDIR/$id.info"
+    chmod 0644 "$SNAPDIR/$id.info"
+    note "created $id trigger=$trigger desc=$desc"
+    if [ "$trigger" = update ] && [ "$(conf_value SNAPSHOT_AUTO_PRUNE no)" = yes ]; then
+        prune_now
+    fi
+    status "Snapshot created"
+    printf '@@CREATED %s\n' "$id"
+}
+
+cmd_list() {
+    require_btrfs
+    found=0
+    while IFS= read -r id; do
+        found=1
+        printf '%s  %s  (%s)\n' "$id" "$(info_value "$id" DESCRIPTION)" "$(info_value "$id" TRIGGER)"
+    done < <(ids)
+    [ "$found" -eq 1 ] || echo "No snapshots."
+}
+
+delete_one() {
+    btrfs subvolume delete "$SNAPDIR/$1" >/dev/null 2>&1 || return 1
+    rm -f "$SNAPDIR/$1.info"
+    note "deleted $1"
+}
+
+cmd_delete() {
+    require_btrfs
+    valid_id "$1" || fail "no such snapshot: $1"
+    status "Deleting $1…"
+    delete_one "$1" || fail "btrfs could not delete $1"
+    status "Snapshot deleted"
+}
+
+# prune_candidates : automatic snapshots beyond the newest SNAPSHOT_RETENTION.
+prune_candidates() {
+    keep=$(conf_value SNAPSHOT_RETENTION 10)
+    case $keep in ''|*[!0-9]*|0) keep=10 ;; esac
+    ids | while IFS= read -r id; do
+        [ "$(info_value "$id" TRIGGER)" = update ] && printf '%s\n' "$id"
+    done | tail -n +$((keep + 1))
+}
+
+prune_now() {
+    prune_candidates | while IFS= read -r id; do
+        delete_one "$id" && printf '@@ITEM deleted %s\n' "$id" || printf '@@LOG %s\n' "WARNING: could not delete $id"
+    done
+}
+
+# --- rollback --------------------------------------------------------------------
+
+cmd_rollback() {
+    require_btrfs
+    valid_id "$1" || fail "no such snapshot: $1"
+    verdict=$(rollback_check)
+    [ "$verdict" = yes ] || fail "rollback is not supported here: ${verdict#no }"
+    sv=$(fstab_root_subvol); sv=${sv#/}
+    dev=$(findmnt -n -o SOURCE --target "$ROOT" | sed 's/\[.*\]$//')
+    [ -b "$dev" ] || fail "cannot find the device of the system disk ($dev)"
+    top=$(mktemp -d /run/luxenos-btrfs-top.XXXXXX) || fail "cannot create a mount point"
+    # shellcheck disable=SC2317  # invoked via trap
+    cleanup() { umount "$top" 2>/dev/null; rmdir "$top" 2>/dev/null; }
+    trap cleanup EXIT
+    mount -o subvolid=5 "$dev" "$top" || fail "cannot mount the top level of the Btrfs filesystem"
+    [ -d "$top/$sv" ] && btrfs subvolume show "$top/$sv" >/dev/null 2>&1 \
+        || fail "the system subvolume $sv was not found at the top level"
+    [ -d "$top/$sv/.snapshots/$1" ] || fail "the snapshot is not inside the system subvolume as expected"
+    stamp=$(date +%Y%m%d-%H%M%S)
+    old="$sv.before-rollback-$stamp"
+    [ ! -e "$top/$old" ] || fail "$old already exists"
+
+    status "Saving the current system as $old…"
+    note "rollback $1: renaming $sv to $old"
+    mv "$top/$sv" "$top/$old" || fail "could not rename the current system subvolume; nothing was changed"
+    status "Creating the new system from the snapshot…"
+    if ! btrfs subvolume snapshot "$top/$old/.snapshots/$1" "$top/$sv" >/dev/null 2>&1; then
+        mv "$top/$old" "$top/$sv" || fail "CRITICAL: could not restore the name $sv; boot a rescue system and rename $old back to $sv"
+        fail "could not create the new system from the snapshot; nothing was changed"
+    fi
+    # Keep the snapshots reachable from the new system: move the .snapshots
+    # subvolume over (the copy only has an empty placeholder directory).
+    if rmdir "$top/$sv/.snapshots" 2>/dev/null && mv "$top/$old/.snapshots" "$top/$sv/.snapshots"; then
+        note "moved .snapshots into the new system"
+    else
+        printf '@@LOG %s\n' "WARNING: the snapshot list stays in $old/.snapshots; it is not lost"
+    fi
+    note "rollback to $1 prepared; previous system kept as $old"
+    item previous "$old"
+    status "Rollback prepared. Restart the computer to start the snapshot. The previous system is kept as $old."
+}
+
+case ${1:-} in
+    status) cmd_status ;;
+    create) shift; lock; cmd_create "$@" ;;
+    list) cmd_list ;;
+    delete) [ $# -eq 2 ] || fail "usage: delete ID"; lock; cmd_delete "$2" ;;
+    prune-preview) require_btrfs; prune_candidates ;;
+    prune) require_btrfs; lock; prune_now; status "Old automatic snapshots deleted" ;;
+    rollback) [ $# -eq 2 ] || fail "usage: rollback ID"; lock; cmd_rollback "$2" ;;
+    *) fail "unknown action (status, create, list, delete, prune, prune-preview, rollback)" ;;
+esac

@@ -1,0 +1,10 @@
+[Unit]
+Description=LuxenOS: notify about available software updates
+# Reads apt's simulation only (no privileges); does nothing when notifications
+# are off in /etc/luxenos/updater.conf (ENABLE_NOTIFICATIONS, NOTIFY_AVAILABLE).
+ConditionKernelCommandLine=!boot=live
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/luxenos-update-manager --notify
+TimeoutStartSec=20min

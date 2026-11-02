@@ -109,8 +109,8 @@ def root_fs():
 
 def snapshot_note(fstype):
     if fstype == "btrfs":
-        return ("The system disk uses Btrfs, which can take snapshots, but LuxenOS does not manage Btrfs "
-                "snapshots yet. Restore points here are configuration backups, not snapshots.")
+        return ("The system disk uses Btrfs: full system snapshots are on the Snapshots page. Restore points "
+                "here are configuration backups (/etc and the package list), not snapshots.")
     return ("The system disk uses %s, which has no snapshots. Restore points are configuration backups "
             "(/etc and the package list), not complete copies of the system." % fstype)
 

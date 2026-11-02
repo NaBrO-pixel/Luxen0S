@@ -5,7 +5,7 @@
 #
 # Mandatory for the graphical session: sway swaylock swayidle waybar wofi
 # dunst foot polkit agent + pkexec/polkitd, zenity, fonts, adwaita-icon-theme,
-# network-manager-gnome (base list: nm-applet, nm-connection-editor).
+# network-manager-applet + nm-connection-editor (base list).
 # Optional/nice-to-have: nwg-look, swappy, grim/slurp, thunar/tumbler.
 # SwayFX is built from pinned upstream sources by
 # config/hooks/live/0200-build-swayfx.hook.chroot; stock Sway remains installed
@@ -85,7 +85,15 @@ fonts-dejavu
 # Everyday apps
 firefox-esr
 mpv
+# PDF viewer. Debian 14 (forky) dropped evince from testing in favour of its
+# GTK 4 successor, papers. live-build evaluates these conditionals itself;
+# tools/expand-package-lists does the same for CI.
+#if DISTRIBUTION trixie
 evince
+#endif
+#if DISTRIBUTION forky
+papers
+#endif
 gedit
 
 # Liquid-glass theme, .deb / .exe double-click integration

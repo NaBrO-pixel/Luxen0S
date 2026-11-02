@@ -1,0 +1,70 @@
+#!/bin/sh
+# luxenos-firewall-root - lets Phone Connect open exactly the KDE Connect ports
+# (1714-1764 TCP and UDP) for ONE local network, and close them again.
+# Started through pkexec, polkit action org.luxenos.firewall (administrator
+# password each time). LuxenOS's firewall stays default-deny for everything
+# else; nothing here can open other ports or allow the whole internet.
+#
+#   allow-phone CIDR     e.g. 192.168.1.0/24 - private/link-local ranges only
+#   deny-phone           remove every rule this helper added
+#   status               print the rules this helper added
+#
+# Rules carry the ufw comment "luxenos-phone", so they can be listed and
+# removed precisely.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+TAG=luxenos-phone
+
+fail() { printf '@@LOG ERROR: %s\n' "$*"; logger -t luxenos-firewall -- "FAILED: $*" 2>/dev/null; exit 1; }
+[ "$(id -u)" -eq 0 ] || fail "must run as root (through pkexec)"
+command -v ufw >/dev/null 2>&1 || fail "the ufw firewall is not installed"
+
+# valid_private_cidr CIDR : IPv4 a.b.c.d/nn in 10/8, 172.16/12, 192.168/16 or
+# 169.254/16, prefix 16-30.
+valid_private_cidr() {
+    printf '%s\n' "$1" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$' || return 1
+    ip=${1%/*}; len=${1#*/}
+    [ "$len" -ge 16 ] && [ "$len" -le 30 ] || return 1
+    IFS=. read -r a b c d <<EOF
+$ip
+EOF
+    for o in "$a" "$b" "$c" "$d"; do [ "$o" -le 255 ] || return 1; done
+    [ "$a" -eq 10 ] && return 0
+    [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ] && return 0
+    [ "$a" -eq 192 ] && [ "$b" -eq 168 ] && return 0
+    [ "$a" -eq 169 ] && [ "$b" -eq 254 ] && return 0
+    return 1
+}
+
+remove_rules() {
+    while n=$(ufw status numbered 2>/dev/null | grep -F "# $TAG" | head -n 1 | sed -n 's/^\[ *\([0-9]*\)\].*/\1/p') \
+        && [ -n "$n" ]; do
+        ufw --force delete "$n" >/dev/null || fail "could not remove firewall rule $n"
+    done
+}
+
+case ${1:-} in
+    allow-phone)
+        [ $# -eq 2 ] || fail "usage: allow-phone CIDR"
+        valid_private_cidr "$2" || fail "only a private local network (for example 192.168.1.0/24) can be allowed"
+        remove_rules
+        for proto in tcp udp; do
+            ufw allow from "$2" to any port 1714:1764 proto "$proto" comment "$TAG" >/dev/null \
+                || fail "ufw refused the rule"
+        done
+        logger -t luxenos-firewall -- "phone connections allowed from $2 (uid ${PKEXEC_UID:-?})" 2>/dev/null
+        printf '@@STATUS Phone connections allowed from %s\n' "$2"
+        ;;
+    deny-phone)
+        [ $# -eq 1 ] || fail "usage: deny-phone"
+        remove_rules
+        logger -t luxenos-firewall -- "phone connections blocked again (uid ${PKEXEC_UID:-?})" 2>/dev/null
+        printf '@@STATUS Phone connections blocked\n'
+        ;;
+    status)
+        ufw status 2>/dev/null | grep -F "# $TAG" || echo "no phone rules"
+        ;;
+    *) fail "unknown action (allow-phone, deny-phone, status)" ;;
+esac

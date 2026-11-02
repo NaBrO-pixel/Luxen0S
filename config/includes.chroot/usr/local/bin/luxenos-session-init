@@ -12,8 +12,9 @@
 #      if NetworkManager is actually running
 #   6. ~/Pictures for screenshots
 #   7. LuxenOS shell: the launcher (resident and hidden, so Super+Space is
-#      instant) and the dock; both are single-instance, so a second start is
-#      a no-op. Night light is restored if it was on at logout.
+#      instant), the dock, desktop widgets and the wallpaper daemon (only when
+#      configured); all single-instance, so a second start is a no-op. Night
+#      light is restored if it was on at logout.
 #   8. Per-user Sway fragments (~/.config/luxenos/sway.d) for configs made
 #      before they were included by the default config.
 
@@ -54,7 +55,11 @@ if have luxenos-polkit-agent; then
     (setsid luxenos-polkit-agent >/dev/null 2>&1 &)
 fi
 
-# 4. Notifications.
+# 4. Notifications: per-app rules, history size and sounds first (a dunst
+#    drop-in written by the Notification Center), then dunst itself.
+if have luxenos-notifications; then
+    luxenos-notifications --write-config >/dev/null 2>&1 || log "notification rules not written"
+fi
 start_once dunst
 
 # 5. Network tray applet: exactly one, only with NetworkManager running.
@@ -77,6 +82,11 @@ mkdir -p "$HOME/Pictures" 2>/dev/null
 # 7. Shell components.
 if have luxenos-launcher; then (setsid luxenos-launcher --background >/dev/null 2>&1 &); fi
 if have luxenos-dock; then (setsid luxenos-dock >/dev/null 2>&1 &); fi
+# Desktop widgets (only the ones enabled in ~/.config/luxenos/widgets.conf;
+# none enabled = nothing stays running) and the wallpaper daemon, which exits
+# at once unless a slideshow or per-workspace wallpapers are configured.
+if have luxenos-widgets; then (setsid luxenos-widgets >/dev/null 2>&1 &); fi
+if have luxenos-wallpaper; then (setsid luxenos-wallpaper daemon >/dev/null 2>&1 &); fi
 qs="${XDG_CONFIG_HOME:-$HOME/.config}/luxenos/quick-settings.conf"
 if have wlsunset && grep -qx 'NIGHT_LIGHT=yes' "$qs" 2>/dev/null; then
     start_once wlsunset -t 4000 -T 4001

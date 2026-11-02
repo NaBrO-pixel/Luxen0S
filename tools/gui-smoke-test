@@ -89,7 +89,8 @@ run_app() {   # run_app NAME SECONDS ARGS...
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
 }
 
-apps=${*:-launcher dock quick-settings overview monitor software restore-center welcome settings-theme}
+apps=${*:-launcher dock quick-settings overview monitor software restore-center welcome settings-theme
+         update-manager hardware widgets notifications personalize android phone wine-manager plugins assistant}
 for a in $apps; do
     case $a in
         launcher) run_app launcher 3 luxenos-launcher ;;
@@ -101,6 +102,18 @@ for a in $apps; do
         restore-center) run_app restore-center 3 luxenos-restore-center ;;
         welcome) run_app welcome 3 luxenos-welcome --force ;;
         settings-theme) run_app theme-list 1 luxenos-theme list ;;
+        update-manager) run_app update-manager 6 luxenos-update-manager ;;
+        hardware) run_app hardware 5 luxenos-hardware ;;
+        widgets) mkdir -p "$XDG_CONFIG_HOME/luxenos"
+                 printf 'WIDGETS=clock cpu ram network storage\n' > "$XDG_CONFIG_HOME/luxenos/widgets.conf"
+                 run_app widgets 4 luxenos-widgets ;;
+        notifications) run_app notifications 3 luxenos-notifications ;;
+        personalize) run_app personalize 4 luxenos-personalize ;;
+        android) run_app android 3 luxenos-android ;;
+        phone) run_app phone 3 luxenos-phone ;;
+        wine-manager) run_app wine-manager 3 luxenos-wine-manager ;;
+        plugins) run_app plugins 3 luxenos-plugins ;;
+        assistant) run_app assistant 3 luxenos-assistant ;;
         *) echo "unknown app $a"; fails=$((fails + 1)) ;;
     esac
 done

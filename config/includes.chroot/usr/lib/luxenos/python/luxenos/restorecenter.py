@@ -10,9 +10,10 @@ without the desktop: `sudo luxenos-restore` on a text console.
 """
 
 import os
+import subprocess
 import sys
 
-from . import config, restore, ui
+from . import config, restore, snapshots, ui
 
 APP_ID = "org.luxenos.RestoreCenter"
 
@@ -40,7 +41,13 @@ def main(argv=None):
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             for m in ("start", "end", "top", "bottom"):
                 getattr(root, "set_margin_" + m)(12)
-            self.set_child(root)
+            self.pages = Gtk.Stack()
+            self.pages.set_transition_duration(ui.transition_ms(150))
+            self.pages.add_titled(root, "points", "Restore points")
+            self.snap_page = SnapshotPage(self)
+            self.pages.add_titled(self.snap_page, "snapshots", "Snapshots")
+            header.set_title_widget(Gtk.StackSwitcher(stack=self.pages))
+            self.set_child(self.pages)
             note = ui.label(restore.snapshot_note(restore.root_fs()), "lx-banner info", wrap=True)
             root.append(note)
             if config.is_live_session():
@@ -266,10 +273,165 @@ def main(argv=None):
             ui.run_streaming(["pkexec", restore.ROOT_HELPER] + list(args), on_line, on_done)
 
         def on_close(self, *_):
-            if self.busy:
+            if self.busy or self.snap_page.busy:
                 ui.alert(self, "Please wait", "A restore-point operation is still running.")
                 return True
             return False
+
+    class SnapshotPage(Gtk.Box):
+        """Btrfs snapshots: only offered when / is Btrfs; rollback only where the
+        layout allows it (luxenos-snapshot-root status decides, never assumed)."""
+
+        def __init__(self, win):
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            for m in ("start", "end", "top", "bottom"):
+                getattr(self, "set_margin_" + m)(12)
+            self.win = win
+            self.busy = False
+            self.selected = None
+            self.status_info = {}
+            self.intro = ui.label("", "lx-banner info", wrap=True)
+            self.append(self.intro)
+            self.actions = Gtk.Box(spacing=6)
+            self.create_btn = Gtk.Button(label="Take snapshot…")
+            self.create_btn.add_css_class("suggested-action")
+            self.create_btn.connect("clicked", lambda *_: self.ask_create())
+            self.delete_btn = Gtk.Button(label="Delete…")
+            self.delete_btn.connect("clicked", lambda *_: self.confirm_delete())
+            self.rollback_btn = Gtk.Button(label="Roll back to this snapshot…")
+            self.rollback_btn.add_css_class("destructive-action")
+            self.rollback_btn.connect("clicked", lambda *_: self.confirm_rollback())
+            self.prune_btn = Gtk.Button(label="Clean up old automatic snapshots…")
+            self.prune_btn.connect("clicked", lambda *_: self.confirm_prune())
+            for b in (self.create_btn, self.delete_btn, self.rollback_btn, self.prune_btn):
+                self.actions.append(b)
+            self.append(self.actions)
+            self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+            self.list.add_css_class("boxed-list")
+            self.list.connect("row-selected", self.on_select)
+            sw = Gtk.ScrolledWindow(vexpand=True)
+            sw.set_child(self.list)
+            self.append(sw)
+            limits = Gtk.Expander(label="What a snapshot rollback can and cannot do")
+            lb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            for text in snapshots.LIMITS:
+                lb.append(ui.label("• " + text, "lx-small", wrap=True))
+            limits.set_child(lb)
+            self.append(limits)
+            self.status = ui.label("", "lx-small", wrap=True)
+            self.append(self.status)
+            self.reload()
+
+        def reload(self):
+            fstype = snapshots.root_fstype()
+            self.list.remove_all()
+            if fstype != "btrfs":
+                self.status_info = {"supported": "no"}
+                self.intro.set_text("The system disk uses %s. Btrfs snapshots are only available when LuxenOS is "
+                                    "installed on Btrfs; use restore points instead." % fstype)
+                self.actions.set_visible(False)
+                return
+            try:
+                p = subprocess.run([snapshots.ROOT_HELPER, "status"], capture_output=True, text=True,
+                                   timeout=20, check=False)
+                self.status_info = snapshots.parse_status(p.stdout.splitlines())
+            except (OSError, subprocess.SubprocessError) as e:
+                self.status_info = {}
+                self.status.set_text("Cannot read the snapshot status: %s" % e)
+            ok, reason = snapshots.rollback_verdict(self.status_info)
+            self.rollback_ok = ok
+            text = "System snapshots (Btrfs, subvolume %s). /home: %s." % (
+                self.status_info.get("subvolume", "?"), self.status_info.get("home", "?"))
+            text += " Rollback is available." if ok else " Rollback is not available here: %s." % reason
+            self.intro.set_text(text)
+            self.actions.set_visible(True)
+            self.snaps = snapshots.list_snapshots()
+            if not self.snaps:
+                self.list.append(ui.label("No snapshots yet.", "lx-dim"))
+            for s in self.snaps:
+                row = Gtk.ListBoxRow()
+                row.snap = s
+                vb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                for m in ("start", "end", "top", "bottom"):
+                    getattr(vb, "set_margin_" + m)(6)
+                vb.append(ui.label(s.description, "lx-heading"))
+                kind = {"update": "before an update", "manual": "taken by hand",
+                        "rollback": "before a rollback"}[s.trigger]
+                vb.append(ui.label("%s · %s · kernel %s" % (s.created_text, kind, s.info.get("KERNEL", "?")),
+                                   "lx-dim lx-small"))
+                row.set_child(vb)
+                self.list.append(row)
+            try:
+                keep = int(self.status_info.get("retention", "10"))
+            except ValueError:
+                keep = 10
+            self.prunable = snapshots.over_retention(self.snaps, keep)
+            self.on_select(self.list, None)
+
+        def on_select(self, _l, row):
+            self.selected = getattr(row, "snap", None) if row is not None else None
+            live = config.is_live_session()
+            self.create_btn.set_sensitive(not self.busy and not live)
+            self.delete_btn.set_sensitive(not self.busy and self.selected is not None)
+            self.rollback_btn.set_sensitive(not self.busy and self.selected is not None and
+                                            getattr(self, "rollback_ok", False))
+            self.prune_btn.set_sensitive(not self.busy and bool(getattr(self, "prunable", [])))
+
+        def ask_create(self):
+            self.run(["create", "Snapshot taken by hand"], "Taking a snapshot")
+
+        def confirm_delete(self):
+            s = self.selected
+            ui.alert(self.win, "Delete snapshot “%s”?" % s.description,
+                     "Taken %s. It cannot be recovered afterwards." % s.created_text,
+                     buttons=("Cancel", "Delete"), default=0, cancel=0,
+                     callback=lambda i: i == 1 and self.run(["delete", s.id], "Deleting"))
+
+        def confirm_prune(self):
+            names = "\n".join("• %s (%s)" % (s.description, s.created_text) for s in self.prunable)
+            ui.alert(self.win, "Delete %d old automatic snapshot(s)?" % len(self.prunable),
+                     "These are older than the newest %s automatic snapshots (SNAPSHOT_RETENTION). Snapshots "
+                     "you took by hand are kept.\n\n%s" % (self.status_info.get("retention", "10"), names),
+                     buttons=("Cancel", "Delete"), default=0, cancel=0,
+                     callback=lambda i: i == 1 and self.run(["prune"], "Cleaning up"))
+
+        def confirm_rollback(self):
+            s = self.selected
+            ui.alert(self.win, "Roll back to “%s”?" % s.description,
+                     "After the next restart the system is exactly as it was on %s: programs, package versions "
+                     "and system settings. Your files in /home are not changed.\n\nThe current system is kept "
+                     "on disk (renamed), so this can be undone from a rescue system. Restart right after the "
+                     "rollback; changes made before restarting are not kept." % s.created_text,
+                     buttons=("Cancel", "Roll back"), default=0, cancel=0,
+                     callback=lambda i: i == 1 and self.run(["rollback", s.id], "Preparing rollback"))
+
+        def run(self, args, title):
+            if self.busy:
+                return
+            self.busy = True
+            self.on_select(self.list, self.list.get_selected_row())
+            self.status.remove_css_class("lx-crit")
+            self.status.set_text(title + "… (you will be asked for an administrator password)")
+            errors = []
+
+            def on_line(line):
+                if line.startswith("@@STATUS "):
+                    self.status.set_text(line[9:])
+                elif line.startswith("@@LOG "):
+                    errors.append(line[6:])
+
+            def on_done(rc):
+                self.busy = False
+                if rc in (126, 127) and not errors:
+                    self.status.set_text("Authentication was cancelled; nothing was changed.")
+                elif rc != 0:
+                    self.status.set_text("%s failed: %s" % (title, errors[-1] if errors else "exit %d" % rc))
+                    self.status.add_css_class("lx-crit")
+                elif args[0] == "rollback":
+                    ui.alert(self.win, "Rollback prepared", "Restart the computer now to start the snapshot.")
+                self.reload()
+
+            ui.run_streaming(["pkexec", snapshots.ROOT_HELPER] + list(args), on_line, on_done)
 
     class App(Gtk.Application):
         def __init__(self):

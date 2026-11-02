@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hardware
+Comment=Devices, drivers, firmware versions and compatibility
+Exec=luxenos-hardware
+Icon=computer
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.HardwareManager
+Categories=System;HardwareSettings;Settings;
+Keywords=hardware;driver;cpu;gpu;usb;battery;firmware;secure boot;

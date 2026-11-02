@@ -59,10 +59,11 @@ def read_message(sock):
 
 class Connection:
     def __init__(self, path=None, timeout=5.0):
+        path = path or socket_path()
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(timeout)
         try:
-            self.sock.connect(path or socket_path())
+            self.sock.connect(path)
         except OSError as e:
             self.sock.close()
             raise IPCError("cannot connect to Sway: %s" % e) from e
@@ -111,6 +112,21 @@ class Connection:
 def command(cmd):
     with Connection() as c:
         return c.command(cmd)
+
+
+def events(kinds):
+    """Yield (event_type, payload) for subscribed kinds ("workspace", "output",
+    ...) on a dedicated connection, forever. Raises IPCError when Sway goes."""
+    names = {0: "workspace", 1: "output", 2: "mode", 3: "window", 4: "barconfig_update",
+             5: "binding", 6: "shutdown", 7: "tick"}
+    c = Connection()
+    c.subscribe(kinds)
+    try:
+        while True:
+            rtype, data = read_message(c.sock)
+            yield names.get(rtype & ~EVENT_BIT, str(rtype)), data
+    finally:
+        c.close()
 
 
 # --- tree helpers (pure functions, unit tested) -------------------------------

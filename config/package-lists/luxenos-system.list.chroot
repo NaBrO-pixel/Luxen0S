@@ -1,0 +1,17 @@
+# Runtime pieces of the LuxenOS system-management and desktop apps (Update
+# Manager, Hardware Manager, Software Center, notifications, plugins). All of
+# them are small and in both Debian 13 (trixie) and Debian 14 (forky).
+#
+# Hardware Manager: lspci / lsusb, Secure Boot state (mokutil).
+pciutils
+usbutils
+mokutil
+# Software Center: AppStream (DEP-11) metadata from the Debian archive (apt
+# downloads it with the package lists) and its GObject bindings.
+appstream
+gir1.2-appstream-1.0
+# Notification Center: the freedesktop "message" sound, played with pw-play.
+sound-theme-freedesktop
+# Plugin sandbox (also a dependency of flatpak, listed because LuxenOS uses it
+# directly).
+bubblewrap

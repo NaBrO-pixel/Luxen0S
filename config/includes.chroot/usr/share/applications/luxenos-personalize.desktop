@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Personalization
+Comment=Theme, Liquid Glass, wallpapers, fonts, icons
+Exec=luxenos-personalize
+Icon=preferences-desktop-theme
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Personalize
+Categories=Settings;DesktopSettings;
+Keywords=appearance;theme;wallpaper;glass;blur;font;icon;cursor;accent;dark;light;

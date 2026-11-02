@@ -150,6 +150,68 @@ done
 for d in luxenos-software luxenos-monitor luxenos-restore-center luxenos-welcome luxenos-settings luxenos-files; do
     check_file "config/includes.chroot/usr/share/applications/$d.desktop"
 done
+# System management, desktop, Android and software-ecosystem apps (this
+# release): launchers, root helpers, polkit wiring, desktop entries.
+for app in update-manager hardware widgets notifications notify-sound personalize wallpaper android phone \
+           wine-manager plugins assistant; do
+    check_executable "config/includes.chroot/usr/local/bin/luxenos-$app"
+    python3 -m py_compile "config/includes.chroot/usr/local/bin/luxenos-$app" 2>/dev/null \
+        || fail "luxenos-$app does not compile"
+done
+rm -rf config/includes.chroot/usr/local/bin/__pycache__
+for script in \
+    config/includes.chroot/usr/local/bin/luxenos-secureboot \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-snapshot-root \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-android-root \
+    config/includes.chroot/usr/libexec/luxenos/luxenos-firewall-root \
+    tools/expand-package-lists
+do
+    check_executable "$script"
+    check_shell_syntax "$script"
+done
+for helper in luxenos-snapshot-root luxenos-android-root luxenos-firewall-root; do
+    grep -q "/usr/libexec/luxenos/$helper</annotate>" \
+        config/includes.chroot/usr/share/polkit-1/actions/org.luxenos.pkg.policy \
+        || fail "polkit policy does not reference /usr/libexec/luxenos/$helper"
+done
+for d in luxenos-updater luxenos-hardware luxenos-notifications luxenos-personalize luxenos-widgets \
+         luxenos-android luxenos-phone luxenos-wine-manager luxenos-plugins luxenos-assistant; do
+    check_file "config/includes.chroot/usr/share/applications/$d.desktop"
+done
+check_file config/includes.chroot/etc/systemd/user/luxenos-update-notify.timer
+check_file config/includes.chroot/etc/systemd/user/luxenos-update-notify.service
+check_file config/includes.chroot/usr/share/luxenos/ui/gtkgreet.css
+check_executable config/includes.chroot/usr/share/luxenos/plugins/unicode-chars/search
+check_file config/package-lists/luxenos-system.list.chroot
+for b in '$mod+Shift+n exec luxenos-notifications' '$mod+F1 exec luxenos-assistant'; do
+    grep -qF "$b" config/includes.chroot/etc/skel/.config/sway/config || fail "sway config lacks: $b"
+done
+grep -q 'flock -w 600 9' config/includes.chroot/usr/local/bin/luxenos-updater \
+    || fail "luxenos-updater must take the shared package lock (no concurrent package operations)"
+# Package lists must expand for every supported release (live-build
+# conditionals), and the stable release must keep Wine and wlgreet.
+for release in trixie forky; do
+    tools/expand-package-lists "$release" >/dev/null || fail "package lists do not expand for $release"
+done
+for pkgname in wine64 wlgreet; do
+    tools/expand-package-lists trixie | grep -qx "$pkgname" || fail "$pkgname missing from the trixie package set"
+done
+tools/expand-package-lists forky | grep -qx gtkgreet || fail "forky package set has no login greeter (gtkgreet)"
+lb_stub=$(mktemp -d)
+printf '#!/bin/sh\nexit 0\n' > "$lb_stub/lb"
+chmod +x "$lb_stub/lb"
+if VARIANT=installer DISTRIBUTION=forky PATH="$lb_stub:$PATH" sh auto/config >/dev/null 2>&1; then
+    rm -rf "$lb_stub"
+    fail "auto/config accepted DISTRIBUTION=forky without LUXENOS_EXPERIMENTAL_FORKY=1"
+fi
+VARIANT=installer DISTRIBUTION=forky LUXENOS_EXPERIMENTAL_FORKY=1 PATH="$lb_stub:$PATH" sh auto/config >/dev/null 2>&1 \
+    || { rm -rf "$lb_stub"; fail "auto/config rejected DISTRIBUTION=forky with LUXENOS_EXPERIMENTAL_FORKY=1"; }
+if VARIANT=installer DISTRIBUTION=bookworm PATH="$lb_stub:$PATH" sh auto/config >/dev/null 2>&1; then
+    rm -rf "$lb_stub"
+    fail "auto/config accepted an unsupported DISTRIBUTION"
+fi
+rm -rf "$lb_stub"
+
 check_file config/includes.chroot/etc/luxenos/dock.conf
 check_file config/includes.chroot/usr/share/luxenos/ui/shell.css
 check_file config/includes.chroot/usr/share/luxenos/logo.png

@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""Notification sound hook run by dunst (luxenos-notifications rule).
+
+Implementation: /usr/lib/luxenos/python/luxenos/notifications.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("LUXENOS_PYLIB", "/usr/lib/luxenos/python"))
+from luxenos.notifications import sound_main  # noqa: E402
+
+sys.exit(sound_main())

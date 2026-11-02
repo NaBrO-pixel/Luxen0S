@@ -10,7 +10,8 @@ You boot a USB stick, install with Calamares, and log in to Sway.
 ## What this is (and isn't)
 
 LuxenOS is a **Debian remix**, built with `live-build`: Debian 13 "Trixie"
-underneath, with a curated Sway/Wayland desktop, Waydroid for Android apps,
+underneath (Debian 14 "Forky" can be built experimentally, see
+[Debian 14](#debian-14-forky)), with a curated Sway/Wayland desktop, Waydroid for Android apps,
 and a graphical installer. It is not a kernel or userland written from zero -
 no serious general-purpose desktop OS is, realistically, without a multi-year
 team effort. What *is* built here, specifically for this project: the desktop
@@ -123,15 +124,25 @@ SwayFX blurs; there is no X11 dependency.
 
 | App | Open with | What it does |
 | --- | --- | --- |
-| Launcher | Super+Space | Searches installed apps (desktop entries: name, keywords, description), quick actions (settings, lock, log out, restart, shut down; destructive ones need a second Enter), recent documents and files (`plocate`, or a bounded scan of your folders). Executables found by search are never run: their folder opens instead. |
+| Launcher | Super+Space | Universal search: installed apps (typo-tolerant), settings pages, calculator ("2*(3+4)"), unit conversion ("10 km to mi"), web search shortcuts ("wiki …", "ddg …"), recent searches (can be cleared or turned off), launcher plugins, quick actions (settings, lock, log out, restart, shut down; destructive ones need a second Enter), recent documents and files (`plocate`, or a bounded scan of your folders). Executables found by search are never run: their folder opens instead. |
 | Dock | always on, Super+Shift+D focuses it | Pinned and running apps from Sway IPC events; click to start/focus, click the focused app to minimize (Sway scratchpad) and again to restore; several windows cycle; right click lists every window. One per monitor, single instance. Settings > Dock or `luxenos-dock config`. |
 | Quick Settings | Super+N, slider icon in Waybar | Wi-Fi (NetworkManager), Bluetooth (BlueZ), volume (WirePlumber), brightness, night light (wlsunset), Do Not Disturb (dunst), battery, power profile. Real state, refreshed while open; missing hardware shows as unavailable. |
-| Workspace overview | Super+Tab | All workspaces on all monitors with their windows; click to focus, drag (or the window menu) to move a window to another or a new workspace. |
+| Workspace overview | Super+Tab | All workspaces on all monitors with their windows and live previews of the windows on screen; click to focus, drag (or the window menu) to move a window to another or a new workspace; arrow-key navigation; per-workspace menu to rename, set a wallpaper, or close it (its windows move to a neighbour). |
 | System Monitor | Ctrl+Shift+Esc | CPU, memory, network and battery graphs, processes (ending one always asks; other users' processes need an administrator), disk space, warnings for low disk, memory pressure, sustained CPU load and low battery. |
 | Software Center | launcher, dock | Browse/search the Debian catalogue by category, installed software, updates. Shows apt's own preview of every change and where each package comes from (Debian / third-party / local). Changes run through `luxenos-pkg-root` with an administrator password; apt keeps verifying signatures. `.deb` files open in the graphical `.deb` installer. |
 | Restore Center | Settings > Restore points | Restore points before updates or by hand, check, preview, restore (see below). |
 | Welcome guide | first login, then launcher | Keyboard layout, time zone, network, theme pack and accent, updates, suggested apps, shortcuts. Runs once per user on an installed system, never on the live USB; Skip at any time. |
 | Settings | launcher, Super+C | Appearance (theme packs with a 20-second keep/revert preview, light/dark, accent), Accessibility (the existing Liquid Glass page), Dock, and links to the other pages. |
+| Personalization | Settings, launcher | Everything about the look in one window: light/dark, accent, theme packs, Liquid Glass preset and intensity, blur, transparency, shadows, corners, borders, gaps, animation length, fonts, panel position, icon and cursor themes, wallpapers and slideshow, installing themes from files. It only writes through `luxenos-glass`, the wallpaper engine and theme packs (no second config system); "Undo this session" and "Reset to defaults". |
+| Update Manager | launcher ("Update Manager"), Settings | Debian updates (security updates listed and installable separately), Flatpak, firmware (fwupd) and Android (Waydroid) updates, download-only, update history and logs, automatic-update schedule and notifications. Restore point (and on Btrfs a snapshot) before updating; firmware/Android/removals ask first. One package lock shared with the Software Center and the nightly updater. |
+| Hardware | launcher, Settings | CPU, memory, graphics, storage, battery, network, USB, audio, drivers in use, firmware versions, compatibility checks (Android support, missing drivers, boot mode) and Secure Boot status; "Copy report". |
+| Notifications | Super+Shift+N, bell in Waybar | dunst history grouped by app ("show again", remove, clear all), Do Not Disturb, per-app allow/silent/block and sound, notification sounds, action buttons of a notification (dunst's menu). |
+| Desktop widgets | Settings › Desktop widgets | Clock+calendar, weather (Open-Meteo, no account, configurable provider), CPU, memory, battery, network speed, storage, music controls (MPRIS). Drag to move. |
+| Android | launcher, Settings | Start/stop/restart Android, first set-up with progress and image choice, install APKs, open/remove/pin Android apps, Android permission page, display size, storage use, troubleshooting with plain-language explanations. |
+| Phone Connect | launcher, Settings | KDE Connect (installed on request): discovery, explicit pairing, send files and clipboard, ring the phone, phone notifications, media controls; firewall opened only for your local network on request. |
+| Windows Programs | launcher, Settings | Wine prefixes per program, assignments honoured by the `.exe` double-click handler, Windows version, winecfg, launcher shortcuts, backup and restore of prefixes. |
+| Plugins | Settings | Launcher plugins: metadata, permissions, API compatibility, enable/disable. Plugins run sandboxed (bubblewrap) as you, never as root. |
+| Assistant | Super+F1, launcher | Offline help: explains errors and commands, finds settings, hardware troubleshooting, system health summary, update problems. Runs nothing without a click; optional local model (Ollama, loopback only). |
 | Files | dock, launcher | Thunar with breadcrumbs, tabs and split view (F3), thumbnails, archive browsing/extraction (xarchiver), automatic mounting of USB drives, "Open Terminal Here" and "Install with Software Center" for `.deb`. |
 
 **Theme packs** (`/usr/share/luxenos/themes/*.theme`, your own in
@@ -148,7 +159,13 @@ puts settings back and reinstalls/removes packages to match the list, in
 their *current* repository versions. It never touches `/home`, accounts and
 passwords, the machine id, `fstab`/`crypttab`, kernels or the core desktop
 packages, and it saves the current state as a new restore point first. ext4
-has no snapshots; on Btrfs LuxenOS does not manage snapshots yet. If the
+has no snapshots. **On Btrfs** the Restore Center also has a Snapshots
+page: read-only snapshots of the system (by hand, and before every update
+unless `SNAPSHOT_BEFORE_UPDATE=no`), deletion (always confirmed; old
+automatic ones only by your choice or `SNAPSHOT_AUTO_PRUNE=yes`), and a
+rollback that makes a snapshot the system for the next boot - offered only
+when fstab mounts the root by `subvol=`, `/boot` is on it and `/home` is a
+separate subvolume, and the previous system is kept on disk. If the
 desktop does not start: Ctrl+Alt+F2, log in, `sudo luxenos-restore`.
 
 ### Installation
@@ -270,7 +287,8 @@ to "beat" a mainstream OS without receipts):
 - Base: Debian 13 "Trixie"
 - Desktop (installed system and `luxenos.session=desktop`): Sway + Waybar
 - Android runtime: Waydroid, GAPPS or VANILLA image, Aurora Store fallback
-- Boot: BIOS (syslinux) and UEFI (`grub-efi`), no Secure Boot
+- Boot: BIOS (syslinux) and UEFI (`grub-efi`); Secure Boot opt-in
+  (`LUXENOS_SECURE_BOOT=1`, untested, see [Secure Boot](#secure-boot))
 
 ## Requirements to build
 
@@ -423,6 +441,8 @@ starts the session. It does not configure Google Play Store certification.
 | Super+D | App launcher (wofi) |
 | Super+Tab | Workspace overview |
 | Super+N | Quick Settings |
+| Super+Shift+N | Notification Center |
+| Super+F1 | Assistant |
 | Super+Shift+D | Keyboard focus to the dock (Esc returns) |
 | Ctrl+Shift+Esc | System Monitor |
 | Super+A | Open Waydroid / Android UI |
@@ -477,6 +497,12 @@ for programs that are installed; override with `GLASS_NS_BAR`,
 | SwayFX | built from pinned upstream sources by the ISO hook | blur, rounded windows, shadows | bundled |
 | LuxenOS apps | `python3-gi` `python3-gi-cairo` `gir1.2-gtk-4.0` `gir1.2-gtk4layershell-1.0` `python3-apt` | launcher, dock, Quick Settings, overview, Software Center, System Monitor, Restore Center, welcome | mandatory (checked by hook 0400) |
 | Night light, file search | `wlsunset`, `plocate` | Quick Settings, launcher | optional (shown as unavailable / folder scan) |
+| Hardware Manager | `pciutils` `usbutils` `mokutil` (+ `fwupd`) | device lists, Secure Boot state | in `luxenos-system.list.chroot`; missing tools give empty sections |
+| Software Center apps | `appstream` `gir1.2-appstream-1.0` | app names, descriptions, screenshots | optional at run time (falls back to package names) |
+| Notification sounds | `sound-theme-freedesktop` (+ `pipewire-bin`'s `pw-play`) | sounds | optional |
+| Plugin sandbox | `bubblewrap` | launcher plugins | without it no plugin runs |
+| Phone Connect | `kdeconnect` | phone integration | **not in the image**; installed from Phone Connect on request |
+| Login screen on Debian 14 | `gtkgreet` | greeter where wlgreet is missing | forky builds only |
 | Files extras | `thunar-archive-plugin` `xarchiver` `thunar-volman` `ffmpegthumbnailer` | archives, USB auto-mount, video thumbnails | optional |
 
 `nm-applet` is started once by `luxenos-session-init`, only if
@@ -484,7 +510,121 @@ NetworkManager is running. The Waybar network module only shows status; its
 click opens the connection editor (`luxenos-network`). It is not a second
 applet.
 
+## Configuration
+
+Every new feature is configured with KEY=VALUE files (parsed, never
+executed), per user under `~/.config/luxenos/` unless noted:
+
+| File | What | Written by |
+| --- | --- | --- |
+| `/etc/luxenos/glass.conf`, `glass.conf` | look; new keys `GLASS_ICON_THEME`, `GLASS_CURSOR_THEME`, `GLASS_CURSOR_SIZE`, `GLASS_BAR_POSITION` | Personalization, `luxenos-glass` |
+| `wallpaper.conf` | `WALLPAPER`, `WALLPAPER_MODE`, `WALLPAPER_OUTPUT_<NAME>`, `WALLPAPER_WS_<N>`, `SLIDESHOW*` | Personalization, `luxenos-wallpaper`, theme packs |
+| `search.conf` | `SEARCH_HISTORY`, `SEARCH_HISTORY_SIZE`, `SEARCH_WEB`, `SEARCH_WEB_DEFAULT`, `SEARCH_WEB_ENGINE_<ID>`, `SEARCH_PLUGINS` | by hand |
+| `widgets.conf` | `WIDGETS`, `WIDGET_<ID>_POS`, `WEATHER_LAT/LON/PLACE/UNITS/MINUTES/URL` | Desktop widgets settings |
+| `notifications.conf` | `NOTIFY_SOUND`, `NOTIFY_SOUND_FILE`, `NOTIFY_HISTORY`, `APP_<KEY>_MODE/SOUND/URGENCY` | Notification Center (generates `~/.config/dunst/dunstrc.d/50-luxenos-notifications.conf`) |
+| `overview.conf` | `OVERVIEW_PREVIEWS=yes|no` | by hand |
+| `plugins.conf` | `PLUGIN_<ID>=yes|no` | Plugins |
+| `assistant.conf` | `ASSISTANT_BACKEND=offline|ollama`, `ASSISTANT_URL` (loopback only), `ASSISTANT_MODEL` | by hand |
+| `wine-apps.list` | `PATH<TAB>PREFIX` per Windows program | Windows Programs |
+| `/etc/luxenos/updater.conf` | existing keys plus `SNAPSHOT_BEFORE_UPDATE`, `SNAPSHOT_RETENTION`, `SNAPSHOT_AUTO_PRUNE` | Update Manager (via `luxenos-pkg-root set-update-schedule`) |
+
+New commands: `luxenos-update-manager [--notify]`, `luxenos-hardware [--report]`,
+`luxenos-secureboot status|check`, `luxenos-wallpaper …`, `luxenos-widgets
+[--settings|--restart|--stop]`, `luxenos-notifications [--write-config]`,
+`luxenos-personalize [--page …]`, `luxenos-android`, `luxenos-phone`,
+`luxenos-wine-manager`, `luxenos-wine-open --prefix NAME FILE`,
+`luxenos-plugins`, `luxenos-assistant`, `luxenos-theme install FILE`.
+New root helpers (pkexec, administrator password): `luxenos-snapshot-root`
+(polkit `org.luxenos.snapshot`), `luxenos-android-root` (`org.luxenos.android`),
+`luxenos-firewall-root` (`org.luxenos.firewall`); `luxenos-pkg-root` gained
+`download-upgrades`, `security-upgrade`, `flatpak-update`, `firmware-update`,
+`waydroid-upgrade`, `set-update-schedule`.
+
+### Writing a launcher plugin
+
+A folder in `~/.local/share/luxenos/plugins/<id>/` with `plugin.conf`
+(`PLUGIN_ID`, `PLUGIN_NAME`, `PLUGIN_VERSION`, `PLUGIN_API=1`,
+`PLUGIN_TYPE=search`, `PLUGIN_EXEC`, optional `PLUGIN_PERMISSIONS=network
+home-read`) and an executable that gets the query as its argument and prints
+`{"results": [{"title": "…", "subtitle": "…", "copy": "…", "open": "https://…"}]}`.
+It runs in a bubblewrap sandbox (read-only `/usr`, no network or home unless
+declared) with a time limit; enable it in Plugins. See the shipped
+`/usr/share/luxenos/plugins/unicode-chars/` ("char arrow", "emoji heart").
+
+## Debian 14 (forky)
+
+Status checked on 2026-11-01 against debian.org and the archive
+(api.ftp-master.debian.org): Debian 13 "trixie" is stable (13.7); Debian 14
+"forky" is **testing, with no release date and no freeze announced**. LuxenOS
+therefore stays on trixie. A forky image can be built for development:
+
+```sh
+sudo LUXENOS_EXPERIMENTAL_FORKY=1 DISTRIBUTION=forky lb config && sudo lb build
+```
+
+The package lists carry live-build conditionals (`#if DISTRIBUTION …`),
+evaluated by live-build and by `tools/expand-package-lists` (CI resolves both
+sets; the forky job is informational). Differences found in the archive:
+
+| trixie | forky (testing, today) | LuxenOS handling |
+| --- | --- | --- |
+| `wine`, `wine64`, `libwine`, `fonts-wine`, `wine32` | only in unstable | excluded on forky; hook 0250 builds without Wine there and `.exe` files report "Wine is not installed" |
+| `wlgreet` | only in unstable | forky uses `gtkgreet` (`luxenos-greeter` falls back to it, `/usr/share/luxenos/ui/gtkgreet.css`) |
+| `evince` | only in unstable | forky uses `papers` |
+| `apparmor-profiles-extra` | removed | trixie only |
+| `network-manager-gnome` (transitional) | removed | both use `network-manager-applet` + `nm-connection-editor` |
+
+Versions in forky at that date, for reference only (they will change): sway
+1.12, waybar 0.15, GTK 4.24, gtk4-layer-shell 1.3, Python 3.14, systemd 262,
+PipeWire 1.6.9, WirePlumber 0.5.18, Linux 7.2, GRUB 2.14, firmware 20260916.
+Not verified on forky: the SwayFX build hook (pinned wlroots 0.19 / SceneFX 0.4
+from source), Calamares 3.4, Waydroid's own repository for forky, and any boot.
+Nothing about forky has been built or booted here.
+
+## Secure Boot
+
+`luxenos-secureboot status|check` and the Hardware Manager report the
+firmware mode, the Secure Boot and Setup Mode state, and whether each link of
+Debian's signed chain is installed: `shim-signed` (Microsoft-signed shim),
+`grub-efi-amd64-signed` (Debian-signed GRUB), a signed Debian kernel
+(`linux-signed-*`), and with `sudo` the files on the EFI system partition.
+LuxenOS never enables or disables Secure Boot and never writes firmware
+variables or keys.
+
+Building with `LUXENOS_SECURE_BOOT=1` passes `--uefi-secure-boot enable` to
+live-build and adds `shim-signed` and `grub-efi-amd64-signed` to the image,
+so Calamares' `grub-install` sets up the signed chain on the installed
+system. **This has not been tested on real firmware**, so LuxenOS does not
+claim Secure Boot support. SwayFX and Waydroid are user-space and unaffected;
+out-of-tree kernel modules (DKMS) need a Machine Owner Key:
+
+```sh
+sudo mokutil --import /var/lib/dkms/mok.pub   # choose a one-time password
+# reboot: the blue MokManager screen asks to "Enroll MOK" with that password
+```
+
+Recovery: if a Secure Boot machine no longer boots LuxenOS, turn Secure
+Boot off in the firmware settings (nothing on the disk has to change), boot,
+and run `sudo luxenos-secureboot check` to see which link is missing.
+
 ## Troubleshooting
+
+**Update Manager says another package operation is running.** The nightly
+updater, the Software Center and the Update Manager share one lock
+(`/run/luxenos-pkg.lock`); wait for the other one. `pgrep -a apt` shows it.
+
+**No snapshots page / rollback not offered.** Snapshots need Btrfs; rollback
+also needs `subvol=` in fstab, `/boot` inside the system subvolume and a
+separate `/home`. `/usr/libexec/luxenos/luxenos-snapshot-root status` prints
+why. After a rollback the old system is kept as `@.before-rollback-DATE`
+(delete it from a rescue system when you no longer need it).
+
+**Phone not found.** Allow phone connections in Phone Connect (it opens ports
+1714-1764 only for your local network), both devices on the same network.
+
+**Weather widget says "Set a location".** Nothing is sent anywhere until you
+set a place in the widget settings.
+
 
 **The greetd login appears, but Sway does not start after authentication.**
 Check `systemctl status greetd` and `journalctl -u greetd -b`. Verify
@@ -553,11 +693,25 @@ and swap with `free -h`.
   real hardware: Wi-Fi/Bluetooth/audio/backlight/battery controls, polkit
   prompts, pointer drag-and-drop in the overview, dock auto-hide and
   multi-monitor hot-plug have not been exercised with real devices. The
-  Software Center lists packages, not AppStream apps (no screenshots or
-  ratings); Flatpak and Waydroid apps are managed elsewhere. Thunar runs
+  Software Center: AppStream names, descriptions and screenshots and the
+  Flatpak page were not exercised here (no AppStream bindings, no Flatpak on
+  the test machine); there are no ratings or reviews. Thunar runs
   files that already have the executable permission when double-clicked
   (scripts ask first); downloads are not executable unless you make them so.
-- No Secure Boot / shim.
+- Secure Boot (`LUXENOS_SECURE_BOOT=1`) is untested on real firmware.
+- **New in this release, tested only by unit tests and a headless GTK start
+  (Broadway backend, no compositor):** Update Manager, Hardware Manager,
+  Notification Center, Personalization, widgets, Android, Phone Connect,
+  Windows Programs, Plugins, Assistant. Not exercised: real Sway/SwayFX
+  layer-shell placement of widgets and notifications, overview previews
+  (grim), Waydroid commands, KDE Connect pairing, Flatpak installs, Wine prefix
+  creation, polkit prompts of the new helpers, Btrfs snapshot creation and
+  rollback (the end-to-end test needs root and loop devices and was skipped),
+  dunst rule reloading.
+- Phone Connect depends on KDE Connect (Qt/KDE libraries, installed on
+  request); automatic clipboard sync from the computer is limited on Wayland.
+- Window previews only exist for windows that are on screen when the
+  overview opens (Sway does not render hidden workspaces).
 - The image is built without Debian's *recommended* packages (see "Image
   size"). Hardware whose firmware is not in
   `config/package-lists/essentials.list.chroot` (for example NVIDIA or
@@ -588,6 +742,10 @@ config/package-lists/essentials.list.chroot            Recommended packages Luxe
 config/package-lists/wine.list.chroot                  Debian Wine packages (32-bit half via hook 0250)
 config/hooks/live/0250-install-wine-and-integrations.hook.chroot
                                                         i386 multiarch + wine32, MIME/desktop DBs, build-time verification
+config/package-lists/luxenos-system.list.chroot       Runtime of the system-management apps (lspci, AppStream, sounds, bubblewrap)
+config/includes.chroot/usr/libexec/luxenos/            + luxenos-snapshot-root, luxenos-android-root, luxenos-firewall-root
+config/includes.chroot/usr/share/luxenos/plugins/      Shipped launcher plugins
+tools/expand-package-lists                              Package set per Debian release (live-build conditionals)
 .github/workflows/validate.yml                          CI: tree validation + lb config dry-run
 tools/validate-release-tree                             Local/CI structural + syntax checks
 CONTRIBUTING.md                                         Development guide

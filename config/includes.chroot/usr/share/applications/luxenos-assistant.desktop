@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Assistant
+Comment=Local help: errors, settings, commands, hardware
+Exec=luxenos-assistant
+Icon=help-browser
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Assistant
+Categories=Utility;
+Keywords=help;assistant;troubleshoot;explain;error;

@@ -38,4 +38,36 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/luxenos/luxenos-restore-root</annotate>
   </action>
+  <action id="org.luxenos.snapshot">
+    <description>Create, delete and roll back Btrfs system snapshots</description>
+    <message>Authentication is required to manage system snapshots</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/luxenos/luxenos-snapshot-root</annotate>
+  </action>
+
+  <action id="org.luxenos.android">
+    <description>Manage the Android (Waydroid) container service</description>
+    <message>Authentication is required to manage the Android container</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/luxenos/luxenos-android-root</annotate>
+  </action>
+
+  <action id="org.luxenos.firewall">
+    <description>Allow or block phone connections in the firewall</description>
+    <message>Authentication is required to change the firewall</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/luxenos/luxenos-firewall-root</annotate>
+  </action>
 </policyconfig>

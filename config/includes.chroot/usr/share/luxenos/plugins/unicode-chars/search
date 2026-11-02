@@ -1,0 +1,25 @@
+#!/usr/bin/python3
+"""Unicode character search for the LuxenOS launcher (plugin API 1).
+
+Runs inside the plugin sandbox: no network, no files, only the standard
+library. Answers queries that start with "char " or "emoji "."""
+import json
+import sys
+import unicodedata
+
+query = " ".join(sys.argv[1:]).strip().lower()
+if query.startswith("-- "):
+    query = query[3:]
+prefix, _, words = query.partition(" ")
+results = []
+if prefix in ("char", "emoji") and words.strip():
+    terms = words.upper().split()
+    lo, hi = (0x1F300, 0x1FAFF) if prefix == "emoji" else (0x20, 0x2FFFF)
+    for cp in range(lo, hi + 1):
+        name = unicodedata.name(chr(cp), "")
+        if name and all(t in name for t in terms):
+            results.append({"title": "%s   %s" % (chr(cp), name.title()), "subtitle": "U+%04X · Enter copies" % cp,
+                            "icon": "accessories-character-map-symbolic", "copy": chr(cp)})
+            if len(results) >= 8:
+                break
+json.dump({"results": results}, sys.stdout)

@@ -14,7 +14,13 @@
 # executable bit run straight through Wine from a terminal, bypassing the
 # graphical handler (luxenos-wine-open) that validates the file and shows
 # errors.
+#
+# Debian 14 (forky): Wine is currently not in testing (only in unstable), so
+# a forky image ships without it; hook 0250 then skips the 32-bit half and
+# luxenos-wine-open explains that Wine is not installed.
+#if DISTRIBUTION trixie
 wine
 wine64
 libwine
 fonts-wine
+#endif

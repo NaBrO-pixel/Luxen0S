@@ -17,15 +17,19 @@ end for apt, not a package manager of its own:
 
 Command line: luxenos-software [--updates | --install PKG... | FILE.deb]
 
-Growth path: the catalogue is package-based. Adding AppStream (DEP-11)
-metadata later only changes load_catalogue(); the operation pipeline stays.
+Applications: Debian's AppStream (DEP-11) metadata (luxenos.appdata) gives
+packages that are desktop apps their real name, description and
+screenshots; without it the plain package list is shown. Flatpak apps
+(Flathub) have their own page (luxenos.flatpak); an app that exists in both
+is linked through its AppStream ID ("also available from Debian") instead
+of being listed twice. Flatpak installs use Flatpak's own authorization.
 """
 
 import os
 import sys
 import threading
 
-from . import config, pkg, ui
+from . import appdata, config, flatpak, pkg, ui
 
 APP_ID = "org.luxenos.SoftwareCenter"
 
@@ -47,6 +51,8 @@ def main(argv=None):
             self.set_default_size(1000, 700)
             self.catalogue = []
             self.by_name = {}
+            self.apps = {}
+            self.apps_by_id = {}
             self.busy = False
             self.category = None
             self.current = None
@@ -79,6 +85,8 @@ def main(argv=None):
             self.build_explore()
             self.build_installed()
             self.build_updates()
+            if flatpak.available():
+                self.build_flatpak()
             self.build_details()
             self.connect("close-request", self.on_close)
             self.reload()
@@ -154,6 +162,105 @@ def main(argv=None):
             box.append(self.scrolled(self.upd_list))
             self.stack.add_titled(box, "updates", "Updates")
 
+        def build_flatpak(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            for m in ("start", "end", "top", "bottom"):
+                getattr(box, "set_margin_" + m)(12)
+            top = Gtk.Box(spacing=6)
+            self.fp_search = Gtk.SearchEntry(placeholder_text="Search Flathub apps", hexpand=True)
+            self.fp_search.connect("activate", lambda *_: self.fill_flatpak())
+            self.fp_search.connect("stop-search", lambda *_: self.fp_search.set_text(""))
+            top.append(self.fp_search)
+            self.fp_scope = Gtk.DropDown.new_from_strings(["Install for everyone", "Install just for me"])
+            ui.accessible_label(self.fp_scope, "Flatpak installation")
+            top.append(self.fp_scope)
+            box.append(top)
+            box.append(ui.label("Flatpak apps come from Flathub, outside Debian; they run with their own runtime and "
+                                "permissions. Press Enter to search; an empty search lists installed Flatpaks.",
+                                "lx-dim lx-small", wrap=True))
+            self.fp_list = self.make_list()
+            box.append(self.scrolled(self.fp_list))
+            self.stack.add_titled(box, "flatpak", "Flatpak")
+            GLib.idle_add(lambda: self.fill_flatpak() or False)
+
+        def fill_flatpak(self):
+            q = self.fp_search.get_text().strip()
+
+            def work():
+                inst = flatpak.installed()
+                found, err = flatpak.search(q) if q else ([], None)
+                GLib.idle_add(show, inst, found, err)
+
+            def show(inst, found, err):
+                self.fp_list.remove_all()
+                installed = {a["id"]: a for a in inst}
+                items = found if q else inst
+                if err:
+                    self.fp_list.append(ui.label("Flatpak search failed: %s" % err, "lx-warn", wrap=True))
+                if not items:
+                    self.fp_list.append(ui.label("No Flatpak apps installed." if not q else "Nothing found.",
+                                                 "lx-dim"))
+                for a in items:
+                    self.fp_list.append(self.flatpak_row(a, installed.get(a["id"])))
+                return False
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def flatpak_row(self, a, inst):
+            row = Gtk.ListBoxRow(activatable=False)
+            hb = Gtk.Box(spacing=10)
+            for m in ("start", "end", "top", "bottom"):
+                getattr(hb, "set_margin_" + m)(6)
+            vb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+            vb.append(ui.label("%s  ·  %s" % (a["name"], a["id"]), "lx-heading"))
+            sub = a.get("summary") or ("%s, %s installation" % (a.get("version") or "", inst["installation"])
+                                       if inst else "")
+            s = ui.label(sub, "lx-dim lx-small")
+            s.set_ellipsize(Pango.EllipsizeMode.END)
+            vb.append(s)
+            deb = self.apps_by_id.get(a["id"]) or self.apps_by_id.get(a["id"] + ".desktop")
+            if deb is not None and deb.pkgname in self.by_name:
+                vb.append(ui.label("Also available from Debian as “%s”%s" % (
+                    deb.pkgname, " (installed)" if self.by_name[deb.pkgname].installed else ""),
+                    "lx-small lx-accent"))
+            hb.append(vb)
+            hb.append(self.badge("Flatpak", "thirdparty"))
+            if inst:
+                b = Gtk.Button(label="Remove")
+                b.add_css_class("destructive-action")
+                b.connect("clicked", lambda *_: ui.alert(
+                    self, "Remove %s?" % a["name"], "Its data in ~/.var/app/%s is kept." % a["id"],
+                    buttons=("Cancel", "Remove"), default=0, cancel=0,
+                    callback=lambda i: i == 1 and self.run_flatpak(
+                        flatpak.uninstall_argv(a["id"], inst["installation"]), "Removing %s" % a["name"])))
+            else:
+                b = Gtk.Button(label="Install")
+                b.add_css_class("suggested-action")
+                b.set_sensitive(bool(a.get("remote")))
+                b.connect("clicked", lambda *_: self.run_flatpak(
+                    flatpak.install_argv(a["id"], a["remote"], user=self.fp_scope.get_selected() == 1),
+                    "Installing %s" % a["name"]))
+            b.set_valign(Gtk.Align.CENTER)
+            hb.append(b)
+            row.set_child(hb)
+            return row
+
+        def run_flatpak(self, argv, title):
+            if self.busy:
+                ui.alert(self, "Please wait", "Another software operation is still running.")
+                return
+            self.set_busy(True)
+            self.prog_status(title + "…", pulse=True)
+            lines = []
+
+            def done(rc):
+                self.set_busy(False)
+                msg = lines[-1] if lines else ""
+                self.prog_status("%s: done." % title if rc == 0 else "%s failed: %s" % (title, msg))
+                self.fill_flatpak()
+
+            ui.run_streaming(argv, lines.append, done)
+
         def build_details(self):
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             for m in ("start", "end", "top", "bottom"):
@@ -186,6 +293,11 @@ def main(argv=None):
             box.append(self.d_origin)
             self.d_facts = ui.label("", "lx-dim lx-small", wrap=True, selectable=True)
             box.append(self.d_facts)
+            self.d_shot = Gtk.Picture()
+            self.d_shot.set_can_shrink(True)
+            self.d_shot.set_size_request(-1, 260)
+            self.d_shot.set_visible(False)
+            box.append(self.d_shot)
             self.d_desc = ui.label("", None, wrap=True, selectable=True)
             self.d_desc.set_valign(Gtk.Align.START)
             box.append(self.scrolled(self.d_desc))
@@ -233,9 +345,11 @@ def main(argv=None):
             for m in ("start", "end", "top", "bottom"):
                 getattr(hb, "set_margin_" + m)(6)
             vb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-            name = ui.label(info.name, "lx-heading")
+            app = self.apps.get(info.name)
+            name = ui.label("%s  ·  %s" % (app.name, info.name) if app and app.name.lower() != info.name
+                            else info.name, "lx-heading")
             vb.append(name)
-            s = ui.label(info.summary, "lx-dim lx-small")
+            s = ui.label(app.summary if app and app.summary else info.summary, "lx-dim lx-small")
             s.set_ellipsize(Pango.EllipsizeMode.END)
             vb.append(s)
             hb.append(vb)
@@ -284,6 +398,7 @@ def main(argv=None):
             self.fill_explore()
             self.fill_installed()
             self.fill_updates()
+            threading.Thread(target=self.load_appdata, daemon=True).start()
             pending = getattr(self.get_application(), "pending", None)
             if pending:
                 self.get_application().pending = None
@@ -329,6 +444,11 @@ def main(argv=None):
             q = self.search.get_text()
             if not q and self.category is None:
                 items = [self.by_name[n] for n, _ in pkg.SUGGESTED if n in self.by_name]
+                if self.apps:
+                    # Then every other desktop app Debian describes with AppStream.
+                    shown = {i.name for i in items}
+                    items += sorted((self.by_name[n] for n in self.apps if n in self.by_name and n not in shown),
+                                    key=lambda i: self.apps[i.name].name.lower())[:200]
                 self.explore_count.set_text("Suggested apps — search or pick a category to see more")
                 self.fill(self.explore_list, items, "No catalogue yet: use Refresh.")
                 return
@@ -352,6 +472,18 @@ def main(argv=None):
             self.fill(self.upd_list, items, "No updates.")
             self.stack.get_page(self.stack.get_child_by_name("updates")).set_title(
                 "Updates (%d)" % n if n else "Updates")
+
+        def load_appdata(self):
+            apps = appdata.load()
+            GLib.idle_add(self.appdata_loaded, apps)
+
+        def appdata_loaded(self, apps):
+            self.apps = apps
+            self.apps_by_id = appdata.by_id(apps)
+            if apps:
+                self.fill_explore()
+                self.fill_installed()
+            return False
 
         def show_details(self, info):
             self.current = info
@@ -379,6 +511,14 @@ def main(argv=None):
                 facts.append("Installed size: %s" % ui.human_bytes(info.size))
             self.d_facts.set_text("\n".join(facts))
             self.d_desc.set_text("Loading description…")
+            app = self.apps.get(info.name)
+            self.d_shot.set_visible(False)
+            if app:
+                self.d_name.set_text("%s (%s)" % (app.name, info.name))
+                if app.summary:
+                    self.d_summary.set_text(app.summary)
+                if app.screenshots:
+                    threading.Thread(target=self.load_shot, args=(info, app.screenshots[0]), daemon=True).start()
 
             def work():
                 try:
@@ -391,10 +531,21 @@ def main(argv=None):
             self.update_detail_buttons()
             self.stack.set_visible_child_name("details")
 
+        def load_shot(self, info, url):
+            path = appdata.screenshot(url)
+            GLib.idle_add(self.show_shot, info, path)
+
+        def show_shot(self, info, path):
+            if self.current is info and path:
+                self.d_shot.set_filename(path)
+                self.d_shot.set_visible(True)
+            return False
+
         def show_description(self, info, desc, homepage, facts):
             if self.current is not info:
                 return False
-            self.d_desc.set_text(desc or info.summary)
+            app = self.apps.get(info.name)
+            self.d_desc.set_text((app.description if app and app.description else "") or desc or info.summary)
             if homepage:
                 self.d_facts.set_text("\n".join(facts + ["Homepage: %s" % homepage]))
             return False

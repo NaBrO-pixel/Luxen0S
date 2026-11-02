@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Notifications
+Comment=Notification history, Do Not Disturb and per-app settings
+Exec=luxenos-notifications
+Icon=preferences-system-notifications
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Notifications
+Categories=Settings;DesktopSettings;
+Keywords=notification;dnd;do not disturb;sound;history;

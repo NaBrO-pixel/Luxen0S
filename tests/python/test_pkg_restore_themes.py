@@ -98,7 +98,7 @@ class RestoreTest(unittest.TestCase):
 
     def test_snapshot_note_is_honest(self):
         self.assertIn("no snapshots", restore.snapshot_note("ext4"))
-        self.assertIn("does not manage", restore.snapshot_note("btrfs"))
+        self.assertIn("Snapshots page", restore.snapshot_note("btrfs"))
         self.assertEqual(restore.parse_item("@@ITEM config changed /etc/x"), ("config", "changed /etc/x"))
 
 

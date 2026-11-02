@@ -11,7 +11,13 @@
 # Wine can run, 32-bit support installed when needed, prefix owned by the
 # user. First run creates the prefix. No terminal window is ever opened.
 #
-# Usage: luxenos-wine-open [program.exe|installer.msi]   (no argument: pick)
+# Per-application prefixes (Wine Manager, luxenos-wine-manager): a program
+# can have its own prefix in ~/.local/share/luxenos/wine/prefixes/NAME, chosen
+# with --prefix NAME or remembered for its path in
+# ~/.config/luxenos/wine-apps.list (lines "ABSOLUTE-PATH<TAB>NAME"). Without
+# either, the default prefix (~/.wine or LUXENOS_WINE_PREFIX) is used as before.
+#
+# Usage: luxenos-wine-open [--prefix NAME] [program.exe|installer.msi]   (no argument: pick)
 
 set -u
 
@@ -79,6 +85,22 @@ trap 'exit 130' INT TERM HUP
 
 # --- pick / validate the file --------------------------------------------------
 
+PREFIXES="${XDG_DATA_HOME:-$HOME/.local/share}/luxenos/wine/prefixes"
+APPS_LIST="${XDG_CONFIG_HOME:-$HOME/.config}/luxenos/wine-apps.list"
+prefix_name=""
+if [ "${1:-}" = --prefix ]; then
+    prefix_name=${2:-}
+    shift 2 2>/dev/null || shift $#
+fi
+valid_prefix_name() {
+    case $1 in ''|.*|*[!A-Za-z0-9._-]*) return 1 ;; esac
+    [ "${#1}" -le 40 ]
+}
+if [ -n "$prefix_name" ] && ! valid_prefix_name "$prefix_name"; then
+    err "Invalid Wine prefix name: $prefix_name"
+    exit 1
+fi
+
 file=${1:-}
 case $file in
     file://*)
@@ -102,6 +124,17 @@ abs=$(readlink -f -- "$file")
 base=$(basename -- "$abs")
 dir=$(dirname -- "$abs")
 size=$(stat -L -c %s -- "$abs" 2>/dev/null || echo 0)
+
+# Per-application prefix: --prefix, else the remembered assignment.
+if [ -z "$prefix_name" ] && [ -r "$APPS_LIST" ]; then
+    prefix_name=$(awk -F '\t' -v p="$abs" '$1 == p { print $2; exit }' "$APPS_LIST" 2>/dev/null)
+    valid_prefix_name "$prefix_name" || prefix_name=""
+fi
+if [ -n "$prefix_name" ]; then
+    WINEPREFIX="$PREFIXES/$prefix_name"
+    export WINEPREFIX
+    mkdir -p "$PREFIXES" 2>/dev/null
+fi
 
 lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
 is_msi=no

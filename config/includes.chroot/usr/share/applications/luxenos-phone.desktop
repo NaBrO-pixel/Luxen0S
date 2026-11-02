@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Phone Connect
+Comment=Pair your phone: files, clipboard, notifications
+Exec=luxenos-phone
+Icon=phone
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Phone
+Categories=Network;
+Keywords=phone;kde connect;pair;sms;clipboard;

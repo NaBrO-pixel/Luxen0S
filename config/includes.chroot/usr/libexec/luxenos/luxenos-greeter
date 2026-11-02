@@ -1,12 +1,27 @@
 #!/bin/sh
-# luxenos-greeter - run the wlgreet login screen in the current liquid-glass
-# palette, then end the greeter compositor so greetd can start the session.
+# luxenos-greeter - run the login screen in the current liquid-glass palette,
+# then end the greeter compositor so greetd can start the session.
 #
-# The colours are generated from /etc/luxenos/glass.conf at every start
-# (`luxenos-glass greeter-config`), so the login screen always matches the
-# desktop theme and accent. If generation fails, the shipped
+# wlgreet (Debian 13): the colours are generated from /etc/luxenos/glass.conf
+# at every start (`luxenos-glass greeter-config`), so the login screen always
+# matches the desktop theme and accent. If generation fails, the shipped
 # /etc/greetd/wlgreet.toml (same palette, dark defaults) is used instead.
+#
+# gtkgreet: fallback for releases without wlgreet (Debian 14 "forky" has not
+# got it), styled by /usr/share/luxenos/ui/gtkgreet.css. Both start the
+# session through luxenos-sway-session.
 conf=/etc/greetd/wlgreet.toml
+SESSION=/usr/local/bin/luxenos-sway-session
+
+if ! command -v wlgreet >/dev/null 2>&1; then
+    if command -v gtkgreet >/dev/null 2>&1; then
+        gtkgreet -l -s /usr/share/luxenos/ui/gtkgreet.css -c "$SESSION"
+    else
+        logger -t luxenos-greeter "no greeter installed (wlgreet or gtkgreet)" 2>/dev/null
+    fi
+    swaymsg exit
+    exit 0
+fi
 
 dir=${XDG_RUNTIME_DIR:-}
 own_dir=""

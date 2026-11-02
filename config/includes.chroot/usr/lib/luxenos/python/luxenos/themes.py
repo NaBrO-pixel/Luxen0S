@@ -7,8 +7,10 @@ existing mechanisms:
   * colours, glass level, GTK/Qt/Waybar/notification/lock-screen styling and
     SwayFX effects: `luxenos-glass` (writes ~/.config/luxenos/glass.conf, the
     same per-user file Settings > Accessibility writes)
-  * wallpaper: a managed Sway fragment, ~/.config/luxenos/sway.d/50-wallpaper.conf
-    (included by the default Sway config), applied live over IPC
+  * wallpaper: the wallpaper engine (luxenos.wallpaper: WALLPAPER in
+    ~/.config/luxenos/wallpaper.conf), which writes the managed Sway fragment
+    ~/.config/luxenos/sway.d/50-wallpaper.conf and applies it live over IPC;
+    per-monitor and per-workspace wallpapers are kept
 
 The user's Liquid Glass intensity and the Accessibility choices are kept
 unless the user asks for the pack's glass level (--with-glass); Reduce motion
@@ -16,7 +18,7 @@ is never touched. Before every apply the previous state is saved, so
 `luxenos-theme revert` (and the Settings preview timer) can undo it.
 
 Usage: luxenos-theme list | current | show ID | validate FILE |
-       apply ID [--with-glass] | revert
+       apply ID [--with-glass] | revert | install FILE [--replace]
 """
 
 import os
@@ -25,11 +27,12 @@ import shutil
 import subprocess
 import sys
 
-from . import config
+from . import config, wallpaper
 
 USAGE = """usage: luxenos-theme list | current | show ID | validate FILE
        luxenos-theme apply ID [--with-glass]   (--with-glass: also use the pack's glass level)
-       luxenos-theme revert                     (back to the appearance before the last apply)"""
+       luxenos-theme revert                     (back to the appearance before the last apply)
+       luxenos-theme install FILE [--replace]   (GTK/icon/cursor theme, wallpaper or preset, for you only)"""
 
 SYSTEM_DIR = os.environ.get("LUXENOS_THEMES_DIR", "/usr/share/luxenos/themes")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
@@ -152,6 +155,7 @@ def save_previous():
     os.makedirs(b, exist_ok=True)
     for name, src in (("glass.conf", os.path.join(cfg_dir(), "glass.conf")),
                       ("50-wallpaper.conf", fragment_path()),
+                      ("wallpaper.conf", wallpaper.conf_path()),
                       ("theme.conf", os.path.join(cfg_dir(), "theme.conf"))):
         dst = os.path.join(b, name)
         if os.path.exists(src):
@@ -193,9 +197,7 @@ def apply(ident, with_glass=False):
         _glass("set-many", *pairs)
     elif not with_glass:
         _glass("apply")
-    cmd = wallpaper_command(values)
-    write_fragment(cmd)
-    _swaymsg(cmd or "output * bg /usr/share/backgrounds/luxenos/wallpaper.png fill")
+    wallpaper.set_default(values.get("WALLPAPER") or values.get("WALLPAPER_COLOR"))
     config.update_kv(os.path.join(cfg_dir(), "theme.conf"), {"CURRENT_THEME": ident},
                      header="# Managed by luxenos-theme.")
 
@@ -206,6 +208,7 @@ def revert():
         raise RuntimeError("there is no previous appearance to go back to")
     for name, dst in (("glass.conf", os.path.join(cfg_dir(), "glass.conf")),
                       ("50-wallpaper.conf", fragment_path()),
+                      ("wallpaper.conf", wallpaper.conf_path()),
                       ("theme.conf", os.path.join(cfg_dir(), "theme.conf"))):
         src = os.path.join(b, name)
         if os.path.exists(src):
@@ -214,13 +217,16 @@ def revert():
         elif os.path.exists(src + ".absent") and os.path.exists(dst):
             os.unlink(dst)
     _glass("apply")
-    cmd = None
-    try:
-        with open(fragment_path(), encoding="utf-8") as f:
-            cmd = next((l.strip() for l in f if l.startswith("output ")), None)
-    except OSError:
-        pass
-    _swaymsg(cmd or "output * bg /usr/share/backgrounds/luxenos/wallpaper.png fill")
+    if os.path.exists(wallpaper.conf_path()):
+        wallpaper.apply()
+    else:
+        cmd = None
+        try:
+            with open(fragment_path(), encoding="utf-8") as f:
+                cmd = next((l.strip() for l in f if l.startswith("output ")), None)
+        except OSError:
+            pass
+        _swaymsg(cmd or "output * bg /usr/share/backgrounds/luxenos/wallpaper.png fill")
 
 
 def main(argv=None):
@@ -251,6 +257,14 @@ def main(argv=None):
             with_glass = "--with-glass" in argv[2:]
             apply(argv[1], with_glass)
             print("applied %s" % argv[1])
+        elif cmd == "install" and len(argv) in (2, 3):
+            from . import themeinstall
+            try:
+                for kind, dest in themeinstall.install(argv[1], replace="--replace" in argv[2:]):
+                    print("installed %s: %s" % (kind, dest))
+            except themeinstall.InstallError as e:
+                print("luxenos-theme: %s" % e, file=sys.stderr)
+                return 1
         elif cmd == "revert" and len(argv) == 1:
             revert()
             print("previous appearance restored")

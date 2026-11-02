@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Desktop Widgets
+Comment=Choose and configure desktop widgets
+Exec=luxenos-widgets --settings
+Icon=preferences-desktop
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.luxenos.Widgets
+Categories=Settings;DesktopSettings;
+Keywords=widget;weather;clock;calendar;cpu;memory;music;

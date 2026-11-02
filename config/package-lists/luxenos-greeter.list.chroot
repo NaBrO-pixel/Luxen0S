@@ -1,2 +1,10 @@
 greetd
+# Login screen. wlgreet is in Debian 13 (trixie) but has not reached Debian 14
+# (forky) testing; there luxenos-greeter falls back to gtkgreet (GTK 3,
+# layer-shell), which forky does ship.
+#if DISTRIBUTION trixie
 wlgreet
+#endif
+#if DISTRIBUTION forky
+gtkgreet
+#endif

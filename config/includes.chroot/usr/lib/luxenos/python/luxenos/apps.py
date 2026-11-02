@@ -43,6 +43,47 @@ class AppEntry:
         return "AppEntry(%r)" % self.app_id
 
 
+def fuzzy_ratio(token, text):
+    """Typo-tolerant match of one query token against text (0 = no match).
+
+    A token matches a word when its letters appear in the word in order with
+    at most one letter of the token missing or swapped ("firfox", "thnuar",
+    "lbreoffice"). Only for tokens of 3+ letters, so short queries stay exact.
+    """
+    if len(token) < 3:
+        return 0
+    best = 0
+    for word in _WORD_SPLIT.split(text):
+        if len(word) < 3:
+            continue
+        # In-order subsequence of the word (letters skipped in the word).
+        it = iter(word)
+        if all(ch in it for ch in token) and len(word) <= len(token) * 2 + 2:
+            best = max(best, 30 if word.startswith(token[0]) else 20)
+            continue
+        # One edit (missing letter, extra letter, or adjacent swap).
+        if abs(len(word[:len(token) + 1]) - len(token)) <= 1 and _one_edit(token, word[:len(token) + 1]) or \
+                _one_edit(token, word[:len(token)]):
+            best = max(best, 18)
+    return best
+
+
+def _one_edit(a, b):
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1 and
+                                  a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    for i in range(len(long_)):
+        if long_[:i] + long_[i + 1:] == short:
+            return True
+    return False
+
+
 def score(query, entry, usage=0):
     """0 = no match. Every query word must match somewhere."""
     q = normalize(query)
@@ -74,6 +115,9 @@ def score(query, entry, usage=0):
             best = 25
         elif token in desc:
             best = 12
+        else:
+            # Typo tolerance, always below any real text match.
+            best = min(10, fuzzy_ratio(token, name) // 3) if fuzzy_ratio(token, name) else 0
         if best == 0:
             return 0
         total += best

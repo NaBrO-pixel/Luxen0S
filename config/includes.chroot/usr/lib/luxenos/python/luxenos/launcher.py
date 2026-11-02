@@ -1,7 +1,12 @@
-"""Spotlight-style launcher (Super+Space).
+"""Spotlight-style launcher (Super+Space): universal search.
 
-Searches installed applications (name, generic name, keywords, description),
-quick actions, recent documents and files, and launches applications through
+Searches installed applications (name, generic name, keywords, description;
+typo-tolerant), quick actions, settings pages, recent documents and files,
+and answers calculations ("2*(3+4)") and unit conversions ("10 km to mi";
+Enter copies the result). Web search shortcuts ("wiki Debian", "ddg ...")
+and launcher plugins are offered after the local results; recent searches
+appear when the box is empty. All of it is configured in
+~/.config/luxenos/search.conf (see luxenos.search). It launches applications through
 their desktop entries (Gio honours Exec, Terminal, Path and the launch
 environment). It stays resident after the first start (started hidden by
 luxenos-session-init), so opening it is instant; running `luxenos-launcher`
@@ -18,7 +23,7 @@ import sys
 import threading
 
 from . import apps as appsmod
-from . import filesearch, ui
+from . import filesearch, plugins, search, ui
 
 APP_ID = "org.luxenos.Launcher"
 WIDTH = 640
@@ -92,7 +97,7 @@ def main(argv=None):
 
             self.entry = Gtk.SearchEntry()
             self.entry.add_css_class("lx-search")
-            self.entry.set_placeholder_text("Search apps, files and actions")
+            self.entry.set_placeholder_text("Search apps, files, settings — or calculate")
             self.entry.set_hexpand(True)
             ui.accessible_label(self.entry, "Search applications, files and actions")
             self.entry.connect("search-changed", lambda *_: self.refresh())
@@ -136,8 +141,9 @@ def main(argv=None):
 
         def header_func(self, row, before):
             if before is None or before.result.kind != row.result.kind:
-                titles = {"app": "Applications", "action": "Quick actions",
-                          "recent": "Recent documents", "file": "Files", "info": ""}
+                titles = {"app": "Applications", "action": "Quick actions", "calc": "Calculator",
+                          "setting": "Settings", "history": "Recent searches", "plugin": "Plugins",
+                          "web": "Web", "recent": "Recent documents", "file": "Files", "info": ""}
                 text = titles.get(row.result.kind, "")
                 row.set_header(ui.label(text, "lx-section") if text else None)
             else:
@@ -174,10 +180,25 @@ def main(argv=None):
             query = self.entry.get_text().strip()
             self.ensure_apps()
             results = []
+            self.search_conf = search.settings()
             if query:
+                value = search.calculate(query)
+                if value is not None:
+                    text = search.format_number(value)
+                    results.append(Result("calc", "= " + text, "Enter copies the result",
+                                          icon="accessories-calculator-symbolic", payload=text))
+                conv = search.convert(query)
+                if conv is not None:
+                    text = "%s %s" % (search.format_number(round(conv[0], 6)), conv[1])
+                    results.append(Result("calc", "%s = %s" % (conv[2], text), "Enter copies the result",
+                                          icon="accessories-calculator-symbolic", payload=text))
                 for e in appsmod.rank(query, self.apps, self.usage, limit=8):
                     results.append(Result("app", e.name, e.description or e.generic,
                                           gicon=e.info.get_icon(), payload=e))
+                for title, argv in search.match_settings(query):
+                    if shutil.which(argv[0]):
+                        results.append(Result("setting", title, "Settings", icon="preferences-system-symbolic",
+                                              payload=argv))
                 results += match_actions(query, available_actions())
                 results += self.recent_items(query, 4)
             else:
@@ -186,21 +207,36 @@ def main(argv=None):
                 for e in frequent:
                     results.append(Result("app", e.name, e.description or e.generic,
                                           gicon=e.info.get_icon(), payload=e))
+                history = search.load_history() if search.config.get_bool(
+                    self.search_conf, "SEARCH_HISTORY", True) else []
+                for h in history[:5]:
+                    results.append(Result("history", h, "Search again", icon="document-open-recent-symbolic",
+                                          payload=h))
+                if history:
+                    results.append(Result("history", "Clear search history", "Forget recent searches",
+                                          icon="edit-clear-all-symbolic", payload=None))
                 results += match_actions("", available_actions())
                 results += self.recent_items("", 5)
             self.results = results
+            self.web_results = []
+            if query:
+                self.web_results = [Result("web", t, u.split("/")[2], icon="web-browser-symbolic", payload=u)
+                                    for t, u in search.web_results(query, self.search_conf)]
             self.file_results = []
             self.rebuild()
             if len(query) >= 2:
                 self.footer.set_text("Searching files (%s)..." % self.files.backend)
                 gen = self.generation
                 threading.Thread(target=self.search_files, args=(query, gen), daemon=True).start()
+                if search.config.get_bool(self.search_conf, "SEARCH_PLUGINS", True):
+                    threading.Thread(target=self.search_plugins, args=(query, gen), daemon=True).start()
             else:
                 self.footer.set_text("Enter to open · ↑↓ to move · Esc to close")
 
         def rebuild(self):
             self.listbox.remove_all()
-            items = self.results + self.file_results
+            items = self.results + self.file_results + getattr(self, "plugin_results", []) + \
+                getattr(self, "web_results", [])
             if not items:
                 items = [Result("info", "No results", "Try another word", icon="edit-find-symbolic")]
             for r in items:
@@ -236,6 +272,29 @@ def main(argv=None):
                 print("luxenos-launcher: file search failed: %s" % e, file=sys.stderr)
                 paths = []
             GLib.idle_add(self.show_files, paths, gen)
+
+        def search_plugins(self, query, gen):
+            try:
+                found = plugins.search_all(query)
+            except Exception as e:  # a plugin must never crash the launcher
+                print("luxenos-launcher: plugin search failed: %s" % e, file=sys.stderr)
+                found = []
+            GLib.idle_add(self.show_plugins, found, gen)
+
+        def show_plugins(self, found, gen):
+            if gen != self.generation:
+                return False
+            self.plugin_results = [Result("plugin", r["title"], r.get("subtitle") or r["plugin"],
+                                          icon=r.get("icon") or "application-x-addon-symbolic", payload=r)
+                                   for r in found]
+            if self.plugin_results:
+                selected = self.listbox.get_selected_row()
+                index = selected.get_index() if selected else 0
+                self.rebuild()
+                row = self.listbox.get_row_at_index(index)
+                if row is not None and row.result.kind != "info":
+                    self.listbox.select_row(row)
+            return False
 
         def show_files(self, paths, gen):
             if gen != self.generation:
@@ -282,7 +341,8 @@ def main(argv=None):
         def move(self, delta):
             row = self.listbox.get_selected_row()
             index = (row.get_index() if row else -1) + delta
-            count = len(self.results) + len(self.file_results)
+            count = len(self.results) + len(self.file_results) + len(getattr(self, "plugin_results", [])) + \
+                len(getattr(self, "web_results", []))
             if count == 0:
                 return
             index = max(0, min(count - 1, index))
@@ -314,10 +374,30 @@ def main(argv=None):
                     row.subtitle_label.add_css_class("lx-warn")
                 return
             ok = True
+            query = self.entry.get_text().strip()
+            if r.kind == "history":
+                if r.payload is None:
+                    search.clear_history()
+                    self.refresh()
+                else:
+                    self.entry.set_text(r.payload)
+                    self.entry.set_position(-1)
+                return
+            if query and r.kind != "calc":
+                search.record_history(query, self.search_conf)
+            if r.kind == "calc":
+                Gdk.Display.get_default().get_clipboard().set(r.payload)
+                self.footer.set_text("Copied %s" % r.payload)
+                search.record_history(query, self.search_conf)
+                return
             if r.kind == "app":
                 ok = self.launch_app(r.payload)
-            elif r.kind == "action":
+            elif r.kind in ("action", "setting"):
                 ok = ui.spawn(r.payload)
+            elif r.kind == "web":
+                ok = self.open_uri(r.payload)
+            elif r.kind == "plugin":
+                ok = self.activate_plugin(r.payload)
             elif r.kind in ("file", "recent"):
                 ok = self.open_path(r.payload)
             if ok:
@@ -333,6 +413,26 @@ def main(argv=None):
                 return False
             self.usage = appsmod.record_launch(entry.app_id)
             return True
+
+        def open_uri(self, uri):
+            if not uri.startswith("https://"):
+                return False
+            try:
+                Gio.AppInfo.launch_default_for_uri(uri, Gdk.Display.get_default().get_app_launch_context())
+            except GLib.Error as e:
+                self.footer.set_text("Cannot open the browser: %s" % e.message)
+                return False
+            return True
+
+        def activate_plugin(self, r):
+            action = r.get("action") or {}
+            if action.get("copy") is not None:
+                Gdk.Display.get_default().get_clipboard().set(str(action["copy"]))
+                self.footer.set_text("Copied")
+                return False
+            if action.get("open"):
+                return self.open_uri(action["open"])
+            return False
 
         def open_path(self, path):
             f = Gio.File.new_for_path(path)

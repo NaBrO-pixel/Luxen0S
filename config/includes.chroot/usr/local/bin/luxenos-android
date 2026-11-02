@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+"""LuxenOS Android Integration Center (Waydroid).
+
+Implementation: /usr/lib/luxenos/python/luxenos/androidcenter.py
+"""
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("LUXENOS_PYLIB", "/usr/lib/luxenos/python"))
+from luxenos.androidcenter import main  # noqa: E402
+
+sys.exit(main())
